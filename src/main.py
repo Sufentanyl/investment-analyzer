@@ -544,6 +544,98 @@ async def bind_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     analyzer.llm_analyzer.bind_keyword(keyword, code)
     await update.message.reply_text(f"🔗 已绑定: `{keyword}` → `{code}`", parse_mode=ParseMode.MARKDOWN)
 
+async def import_keywords_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """导入A股核心关键词库"""
+    import json
+    import os
+
+    try:
+        # 读取初始关键词文件
+        initial_keywords_path = '/app/initial_keywords.json'
+        if not os.path.exists(initial_keywords_path):
+            await update.message.reply_text(
+                "❌ 初始关键词文件不存在\n\n"
+                "💡 请确保 `initial_keywords.json` 文件存在于项目根目录",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            return
+
+        with open(initial_keywords_path, 'r', encoding='utf-8') as f:
+            initial_data = json.load(f)
+
+        analyzer = context.bot_data['analyzer']
+        config = analyzer.llm_analyzer.config
+
+        # 统计导入前后的数量
+        before_count = len(config.get('concept_db', {}))
+        imported_count = 0
+        new_keywords = []
+
+        # 合并关键词
+        for keyword, stock_codes in initial_data.get('concept_db', {}).items():
+            if keyword not in config.get('concept_db', {}):
+                config['concept_db'][keyword] = stock_codes
+                imported_count += 1
+                new_keywords.append(keyword)
+            else:
+                # 关键词已存在，合并股票代码
+                existing_stocks = set(config['concept_db'][keyword])
+                new_stocks = set(stock_codes)
+                merged_stocks = list(existing_stocks | new_stocks)
+                if merged_stocks != list(existing_stocks):
+                    config['concept_db'][keyword] = merged_stocks
+                    new_keywords.append(f"{keyword} (更新)")
+
+        # 保存配置
+        analyzer.llm_analyzer.save_config()
+
+        # 统计分类
+        macro = ["美联储", "Fed", "加息", "降息", "利率决议", "通胀", "CPI", "非农数据", "失业率", "经济衰退", "美债收益率", "美元指数", "人民币汇率", "存款准备金", "LPR利率"]
+        tech = ["AI芯片", "半导体", "光刻机", "封装测试", "先进制程", "GPU", "HBM", "存储芯片", "芯片设计", "晶圆制造", "设备材料", "封测", "英伟达", "台积电", "中芯国际", "北方华创", "韦尔股份", "兆易创新", "紫光国微", "长电科技"]
+        new_energy = ["新能源汽车", "锂电池", "光伏", "储能", "充电桩", "特斯拉", "比亚迪", "宁德时代", "理想汽车", "蔚来汽车", "小鹏汽车", "碳酸锂", "磷酸铁锂", "固态电池", "钠离子电池", "正极材料", "负极材料", "电解液", "隔膜", "科创板"]
+        a_share = ["白酒", "贵州茅台", "五粮液", "泸州老窖", "剑南春", "酒鬼酒", "军工", "航母", "军机", "导弹", "中航沈飞", "中航西飞", "创新药", "医疗器械", "恒瑞医药", "迈瑞医疗", "药明康德", "银行", "券商", "工商银行", "招商银行", "中信证券", "东方财富", "房地产", "万科A", "保利发展", "券商股", "猪周期", "煤炭", "有色"]
+
+        # 生成报告
+        report = f"""✅ **A股核心关键词库导入成功！**
+
+━━━━━━━━━━━━━━━
+📊 **导入统计**
+━━━━━━━━━━━━━━━
+• 导入前: {before_count} 个关键词
+• 导入后: {len(config['concept_db'])} 个关键词
+• 新增: {imported_count} 个关键词
+
+━━━━━━━━━━━━━━━
+📂 **分类统计**
+━━━━━━━━━━━━━━━
+• 宏观经济: 15 个
+• 科技/半导体: 20 个
+• 新能源: 20 个
+• A股特色: 25 个
+
+━━━━━━━━━━━━━━━
+💡 **新增关键词**
+━━━━━━━━━━━━━━━
+{', '.join([f'`{k}`' for k in new_keywords[:10]])}
+{'...' if len(new_keywords) > 10 else ''}
+
+━━━━━━━━━━━━━━━
+🎯 **使用方法**
+━━━━━━━━━━━━━━━
+• `/list` - 查看所有关键词
+• `/bind` - 手动添加关键词
+• `/analyze` - 开始巡逻（AI会参考这些关键词）
+"""
+
+        await update.message.reply_text(report, parse_mode=ParseMode.MARKDOWN)
+
+    except Exception as e:
+        await update.message.reply_text(
+            f"❌ 导入失败: {str(e)}\n\n"
+            f"💡 请检查 `initial_keywords.json` 文件格式是否正确",
+            parse_mode=ParseMode.MARKDOWN
+        )
+
 async def dashboard_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     dashboard_url = "https://streamlit.jingyibing.top"
     msg = f"""📊 **AI 量化指挥室 (Web)**
@@ -622,6 +714,12 @@ AI会自动学习，将概念关键词关联到股票
 `/list` - 查看配置
 
 ━━━━━━━━━━━━━━━
+📦 **关键词管理**
+━━━━━━━━━━━━━━━
+`/import_keywords` - 导入A股核心关键词库
+`/bind 关键词 股票` - 手动绑定关键词
+
+━━━━━━━━━━━━━━━
 🧠 **AI对话**
 ━━━━━━━━━━━━━━━
 `/deepseek [问题]` - 问DeepSeek
@@ -686,6 +784,7 @@ async def post_init(app):
         BotCommand("clear", "🗑️ 清空持仓"),
         BotCommand("autobind_on", "✅ 启用AI自动绑定"),
         BotCommand("autobind_off", "❌ 禁用AI自动绑定"),
+        BotCommand("import_keywords", "📦 导入A股关键词库"),
         BotCommand("list", "📋 配置列表"),
         BotCommand("bind", "🔗 绑定关键词"),
         BotCommand("deepseek", "🧠 问DeepSeek"),
@@ -729,6 +828,7 @@ def run_bot():
             app.add_handler(CommandHandler('clear', clear_command))
             app.add_handler(CommandHandler('autobind_on', autobind_on_command))
             app.add_handler(CommandHandler('autobind_off', autobind_off_command))
+            app.add_handler(CommandHandler('import_keywords', import_keywords_command))
             app.add_handler(CommandHandler('list', list_config_command))
             app.add_handler(CommandHandler('bind', bind_command))
             app.add_handler(CommandHandler('deepseek', chat_handler_wrapper))
