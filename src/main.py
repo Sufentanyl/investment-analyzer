@@ -199,7 +199,18 @@ class AdvancedInvestmentAnalyzer:
             elif analysis.get('stock_market_influence') == 'negative': icon = "🔻"
             
             concept_str = analysis.get('concept', '热点事件')
-            
+
+            # 🔥 新增：AI自动绑定关键词（可开关）
+            if self.llm_analyzer.config.get('auto_bind_keywords', True):  # 默认启用
+                if analysis.get('stock_data'):
+                    for stock in analysis['stock_data']:
+                        stock_code = stock.get('code', '')
+                        if stock_code and concept_str:
+                            # 提取概念关键词（逗号分隔）
+                            keywords = [k.strip() for k in concept_str.split(',') if k.strip()]
+                            # AI自动绑定
+                            self.llm_analyzer.auto_bind_keywords(keywords, stock_code)
+
             # 组装完整文案
             full_msg = f"{icon} **{news['title']}**\n🔥 **涉及概念**: {concept_str}\n\n{final_report}\n\n⏱️ {datetime.now(pytz.timezone('Asia/Shanghai')).strftime('%H:%M')}"
 
@@ -365,6 +376,31 @@ class AdvancedInvestmentAnalyzer:
             parse_mode=ParseMode.MARKDOWN
         )
 
+    async def autobind_on_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """处理启用AI自动绑定"""
+        config = self.llm_analyzer.config
+        config['auto_bind_keywords'] = True
+        self.llm_analyzer.save_config()
+        await update.message.reply_text(
+            "✅ **AI自动绑定关键词已启用**\n\n"
+            "🔗 现在AI分析新闻时会自动将概念关键词关联到股票\n"
+            "例如：看到'AI芯片'会自动关联到相关股票\n\n"
+            "💡 使用 `/list` 查看所有关键词绑定",
+            parse_mode=ParseMode.MARKDOWN
+        )
+
+    async def autobind_off_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """处理禁用AI自动绑定"""
+        config = self.llm_analyzer.config
+        config['auto_bind_keywords'] = False
+        self.llm_analyzer.save_config()
+        await update.message.reply_text(
+            "❌ **AI自动绑定关键词已禁用**\n\n"
+            "💡 你仍然可以手动使用 `/bind 关键词 股票代码` 来绑定\n"
+            "💡 使用 `/autobind_on` 重新启用",
+            parse_mode=ParseMode.MARKDOWN
+        )
+
 
 # ================= 指令函数 =================
 
@@ -410,6 +446,31 @@ async def clear_positions_command(update: Update, context: ContextTypes.DEFAULT_
 
     await update.message.reply_text(f"🗑️ 已清空持仓列表：{cleared_positions}\n\n💡 现在可以添加A股代码了\n例如：`/add 600519`", parse_mode=ParseMode.MARKDOWN)
 
+async def autobind_on_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """启用AI自动绑定关键词"""
+    analyzer = context.bot_data['analyzer']
+    config = analyzer.llm_analyzer.config
+    config['auto_bind_keywords'] = True
+    analyzer.llm_analyzer.save_config()
+    await update.message.reply_text(
+        "✅ **AI自动绑定关键词已启用**\n\n"
+        "🔗 现在AI分析新闻时会自动将概念关键词关联到股票\n"
+        "例如：看到'AI芯片'会自动关联到相关股票",
+        parse_mode=ParseMode.MARKDOWN
+    )
+
+async def autobind_off_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """禁用AI自动绑定关键词"""
+    analyzer = context.bot_data['analyzer']
+    config = analyzer.llm_analyzer.config
+    config['auto_bind_keywords'] = False
+    analyzer.llm_analyzer.save_config()
+    await update.message.reply_text(
+        "❌ **AI自动绑定关键词已禁用**\n\n"
+        "💡 你仍然可以手动使用 `/bind 关键词 股票代码` 来绑定",
+        parse_mode=ParseMode.MARKDOWN
+    )
+
 async def bind_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(context.args) < 2:
         await update.message.reply_text("❌ 用法: `/bind 关键词 股票代码`")
@@ -451,57 +512,70 @@ async def clear_command(u, c):
     """清空持仓命令包装函数"""
     await c.bot_data['analyzer'].clear_positions_handler(update=u, context=c)
 
+async def autobind_on_command(u, c):
+    """启用AI自动绑定"""
+    await c.bot_data['analyzer'].autobind_on_handler(update=u, context=c)
+
+async def autobind_off_command(u, c):
+    """禁用AI自动绑定"""
+    await c.bot_data['analyzer'].autobind_off_handler(update=u, context=c)
+
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = """🤖 **AI 投资助理 (专业版)**
 
 ━━━━━━━━━━━━━━━
-📊 **回测系统** 🔥
+🤖 **AI智能功能** 🔥
 ━━━━━━━━━━━━━━━
-快速回测命令：
-`/backtest_7d` - 回测最近7天
-`/backtest_30d` - 回测最近30天
-`/backtest_90d` - 回测最近90天
+✨ **AI自动绑定关键词**（已启用）
+AI会自动学习，将概念关键词关联到股票
+
+例如：
+• 看到"AI芯片" → 自动关联相关股票
+• 看到"新能源汽车" → 自动关联产业链
+
+控制命令：
+`/autobind_on` - 启用AI自动绑定
+`/autobind_off` - 禁用AI自动绑定
+
+━━━━━━━━━━━━━━━
+📊 **回测系统**
+━━━━━━━━━━━━━━━
+快速回测：
+`/backtest_7d` - 回测7天
+`/backtest_30d` - 回测30天
+`/backtest_90d` - 回测90天
 
 自定义回测：
 `/backtest [天数] [策略]`
 
-可用策略：
-• `hold_3_days` - 持有3天
-• `hold_5_days` - 持有5天
-• `stop_loss_5` - 止损5%
-• `target_profit_10` - 止盈10%
-
 ━━━━━━━━━━━━━━━
-🎮 **常用指令**
+🎮 **持仓管理**
 ━━━━━━━━━━━━━━━
-`/analyze` - 手动巡逻
-`/status` - 系统状态
-`/dashboard` - 量化指挥室
 `/add 代码` - 添加持仓
 `/del 代码` - 删除持仓
-`/list` - 配置列表
+`/clear` - 清空所有持仓
+`/list` - 查看配置
 
 ━━━━━━━━━━━━━━━
-🧠 **AI 对话**
+🧠 **AI对话**
 ━━━━━━━━━━━━━━━
-`/deepseek [问题]` - 问 DeepSeek
-`/gemini [问题]` - 问 Gemini
-`/qwen [问题]` - 问 Qwen
+`/deepseek [问题]` - 问DeepSeek
+`/gemini [问题]` - 问Gemini
+`/qwen [问题]` - 问Qwen
 
 ━━━━━━━━━━━━━━━
-💡 **A股使用示例**
+💡 **A股示例**
 ━━━━━━━━━━━━━━━
-`/add 600519` - 添加贵州茅台
-`/add 300750` - 添加宁德时代
-`/backtest 30 hold_3_days`
-`/deepseek 分析茅台最新走势`
+`/add 600519` - 添加茅台
+`/analyze` - 手动巡逻
+`/backtest_30 hold_3_days`
 
 ━━━━━━━━━━━━━━━
 📌 **说明**
 ━━━━━━━━━━━━━━━
-• 持仓股票：信号阈值降低到0.7（更敏感）
-• 非持仓股票：信号阈值0.8
-• 支持A股（6/0/3开头）和美股代码"""
+• 持仓股票：信号阈值0.7（更敏感）
+• 非持仓：信号阈值0.8
+• 支持A股（6/0/3开头）和美股"""
     await update.message.reply_text(help_text, parse_mode=ParseMode.MARKDOWN)
 
 # 封装 wrapper 以便 context 调用
@@ -545,6 +619,8 @@ async def post_init(app):
         BotCommand("add", "➕ 添加持仓"),
         BotCommand("del", "➖ 删除持仓"),
         BotCommand("clear", "🗑️ 清空持仓"),
+        BotCommand("autobind_on", "✅ 启用AI自动绑定"),
+        BotCommand("autobind_off", "❌ 禁用AI自动绑定"),
         BotCommand("list", "📋 配置列表"),
         BotCommand("bind", "🔗 绑定关键词"),
         BotCommand("deepseek", "🧠 问DeepSeek"),
@@ -586,6 +662,8 @@ def run_bot():
             app.add_handler(CommandHandler('add', add_stock_command))
             app.add_handler(CommandHandler('del', del_stock_command))
             app.add_handler(CommandHandler('clear', clear_command))
+            app.add_handler(CommandHandler('autobind_on', autobind_on_command))
+            app.add_handler(CommandHandler('autobind_off', autobind_off_command))
             app.add_handler(CommandHandler('list', list_config_command))
             app.add_handler(CommandHandler('bind', bind_command))
             app.add_handler(CommandHandler('deepseek', chat_handler_wrapper))

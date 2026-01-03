@@ -93,7 +93,8 @@ class LLMAnalyzer:
         default_conf = {
             "my_positions": [],
             "concept_db": {},
-            "agents": {}
+            "agents": {},
+            "auto_bind_keywords": True  # 默认启用AI自动绑定关键词
         }
         if os.path.exists(self.config_path):
             try:
@@ -151,6 +152,22 @@ class LLMAnalyzer:
             self.config['concept_db'] = {}
         self.config['concept_db'].setdefault(keyword.lower(), []).append(code)
         self.save_config()  # 🔥 修复: 自动保存
+        return True
+
+    def auto_bind_keywords(self, keywords: list, stock_code: str):
+        """AI自动绑定关键词到股票"""
+        if 'concept_db' not in self.config:
+            self.config['concept_db'] = {}
+
+        for keyword in keywords:
+            keyword_lower = keyword.lower().strip()
+            if keyword_lower and len(keyword_lower) >= 2:  # 至少2个字符
+                self.config['concept_db'].setdefault(keyword_lower, [])
+                if stock_code not in self.config['concept_db'][keyword_lower]:
+                    self.config['concept_db'][keyword_lower].append(stock_code)
+                    logger.info(f"🔗 AI自动绑定: '{keyword}' -> {stock_code}")
+
+        self.save_config()
         return True
 
     async def analyze_cross_validate(self, title: str, content: str) -> Dict[str, Any]:
