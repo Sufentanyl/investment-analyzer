@@ -265,14 +265,17 @@ class AdvancedInvestmentAnalyzer:
             logger.warning(f"Markdown 解析失败，使用纯文本: {e}")
             await msg.edit_text(f"🤖 **{model_name.upper()} 回复:**\n\n{response}")
 
-    async def backtest_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def backtest_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE, days=None, strategy=None):
         """处理回测命令"""
         try:
             # 解析参数
-            days = 30  # 默认回测30天
-            strategy = 'hold_3_days'  # 默认策略
+            if days is None:
+                days = 30  # 默认回测30天
+            if strategy is None:
+                strategy = 'hold_3_days'  # 默认策略
 
-            if context.args:
+            # 如果从命令行传递了参数，覆盖默认值
+            if context.args and days is None:
                 for arg in context.args:
                     if arg.isdigit():
                         days = int(arg)
@@ -397,27 +400,62 @@ async def backtest_command(u, c):
     """回测命令包装函数"""
     await c.bot_data['analyzer'].backtest_handler(update=u, context=c)
 
+# 快捷回测命令
+async def backtest_7d_command(u, c):
+    """回测最近7天"""
+    await c.bot_data['analyzer'].backtest_handler(update=u, context=c, days=7, strategy='hold_3_days')
+
+async def backtest_30d_command(u, c):
+    """回测最近30天"""
+    await c.bot_data['analyzer'].backtest_handler(update=u, context=c, days=30, strategy='hold_3_days')
+
+async def backtest_90d_command(u, c):
+    """回测最近90天"""
+    await c.bot_data['analyzer'].backtest_handler(update=u, context=c, days=90, strategy='hold_3_days')
+
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = """🤖 **AI 投资助理 (专业版)**
 
-🧠 **Chat 模式**:
-/deepseek [问题] - 问 DeepSeek
-/gemini [问题] - 问 Gemini
+━━━━━━━━━━━━━━━
+📊 **回测系统** 🔥
+━━━━━━━━━━━━━━━
+快速回测命令：
+`/backtest_7d` - 回测最近7天
+`/backtest_30d` - 回测最近30天
+`/backtest_90d` - 回测最近90天
 
-🎮 **常用指令**：
-/analyze - 手动巡逻
-/backtest [天数] [策略] - 回测历史信号 🔥
-/dashboard - 打开网页指挥室
-/status - 检查状态
-/add `代码` - 监控持仓
+自定义回测：
+`/backtest [天数] [策略]`
 
-📊 **回测策略**:
-hold_3_days - 持有3天
-hold_5_days - 持有5天
-stop_loss_5 - 止损5%
-target_profit_10 - 止盈10%
+可用策略：
+• `hold_3_days` - 持有3天
+• `hold_5_days` - 持有5天
+• `stop_loss_5` - 止损5%
+• `target_profit_10` - 止盈10%
 
-💡 示例: `/backtest 30 hold_3_days`"""
+━━━━━━━━━━━━━━━
+🎮 **常用指令**
+━━━━━━━━━━━━━━━
+`/analyze` - 手动巡逻
+`/status` - 系统状态
+`/dashboard` - 量化指挥室
+`/add 代码` - 添加持仓
+`/del 代码` - 删除持仓
+`/list` - 配置列表
+
+━━━━━━━━━━━━━━━
+🧠 **AI 对话**
+━━━━━━━━━━━━━━━
+`/deepseek [问题]` - 问 DeepSeek
+`/gemini [问题]` - 问 Gemini
+`/qwen [问题]` - 问 Qwen
+
+━━━━━━━━━━━━━━━
+💡 **使用示例**
+━━━━━━━━━━━━━━━
+`/backtest 30 hold_3_days`
+`/add NVDA`
+`/deepseek 分析英伟达`"""
     await update.message.reply_text(help_text, parse_mode=ParseMode.MARKDOWN)
 
 # 封装 wrapper 以便 context 调用
@@ -450,14 +488,18 @@ async def post_init(app):
     app.bot_data['analyzer'].start_scheduler()
     
     commands = [
+        BotCommand("start", "📖 使用说明书"),
         BotCommand("analyze", "👮 手动巡逻"),
-        BotCommand("backtest", "🔬 回测历史信号"),
-        BotCommand("dashboard", "📊 量化指挥室"),
+        BotCommand("backtest", "🔬 自定义回测"),
+        BotCommand("backtest_7d", "📊 回测7天"),
+        BotCommand("backtest_30d", "📊 回测30天"),
+        BotCommand("backtest_90d", "📊 回测90天"),
         BotCommand("status", "🏥 系统状态"),
+        BotCommand("dashboard", "🖥️ 量化指挥室"),
+        BotCommand("list", "📋 配置列表"),
         BotCommand("deepseek", "🧠 问DeepSeek"),
         BotCommand("gemini", "⚖️ 问Gemini"),
-        BotCommand("list", "📋 配置列表"),
-        BotCommand("start", "📖 说明书"),
+        BotCommand("qwen", "💭 问Qwen"),
     ]
     await app.bot.set_my_commands(commands)
     
@@ -485,6 +527,9 @@ def run_bot():
             app.add_handler(CommandHandler('start', start_command))
             app.add_handler(CommandHandler('analyze', analyze_command))
             app.add_handler(CommandHandler('backtest', backtest_command))
+            app.add_handler(CommandHandler('backtest_7d', backtest_7d_command))
+            app.add_handler(CommandHandler('backtest_30d', backtest_30d_command))
+            app.add_handler(CommandHandler('backtest_90d', backtest_90d_command))
             app.add_handler(CommandHandler('status', status_command))
             app.add_handler(CommandHandler('futures', futures_command))
             app.add_handler(CommandHandler('dashboard', dashboard_command))
