@@ -22,6 +22,7 @@ from llm_analyzer import LLMAnalyzer
 from news_collector import AdvancedNewsCollector
 from information_gap_detector import InformationGapDetector
 from futures_watcher import FuturesWatcher
+from backtest import LightweightBacktester
 
 # 配置日志
 logging.basicConfig(
@@ -56,9 +57,10 @@ class AdvancedInvestmentAnalyzer:
         self.chat_id = os.getenv('TELEGRAM_CHAT_ID')
         
         self.news_collector = AdvancedNewsCollector()
-        self.llm_analyzer = LLMAnalyzer() 
+        self.llm_analyzer = LLMAnalyzer()
         self.gap_detector = InformationGapDetector()
         self.futures_watcher = FuturesWatcher()
+        self.backtester = LightweightBacktester()  # 回测引擎
         
         self.redis_client = None
         self._connect_redis()
@@ -263,6 +265,85 @@ class AdvancedInvestmentAnalyzer:
             logger.warning(f"Markdown 解析失败，使用纯文本: {e}")
             await msg.edit_text(f"🤖 **{model_name.upper()} 回复:**\n\n{response}")
 
+    async def backtest_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """处理回测命令"""
+        try:
+            # 解析参数
+            days = 30  # 默认回测30天
+            strategy = 'hold_3_days'  # 默认策略
+
+            if context.args:
+                for arg in context.args:
+                    if arg.isdigit():
+                        days = int(arg)
+                    elif arg in ['hold_3_days', 'hold_5_days', 'stop_loss_5', 'target_profit_10']:
+                        strategy = arg
+
+            # 发送开始消息
+            msg = await update.message.reply_text(
+                f"🔬 **开始回测**\n\n"
+                f"📅 时间范围: 最近{days}天\n"
+                f"📊 策略: {strategy}\n\n"
+                f"⏳ 预计需要1-3分钟，请稍候..."
+            )
+
+            # 运行回测
+            result = await self.backtester.run_backtest(days=days, strategy=strategy)
+
+            if 'error' in result:
+                await msg.edit_text(f"❌ 回测失败: {result['error']}")
+                return
+
+            # 生成报告
+            report = f"""📊 **回测报告**
+
+📅 回测时间: {result['backtest_date']}
+📈 策略: {result['strategy']}
+
+━━━━━━━━━━━━━━━
+📊 **核心指标**
+━━━━━━━━━━━━━━━
+✅ 总信号数: {result['total_signals']}
+🎯 胜率: {result['win_rate']:.1f}%
+💰 盈亏比: {result['profit_loss_ratio']:.2f}
+📉 最大回撤: {result['max_drawdown']:.2f}%
+📈 累计收益: {result['total_profit']:.2f}%
+
+━━━━━━━━━━━━━━━
+🎲 **详细统计**
+━━━━━━━━━━━━━━━
+✅ 盈利笔数: {result['win_count']}
+❌ 亏损笔数: {result['lose_count']}
+📊 平均盈利: {result['avg_profit']:.2f}%
+📊 平均亏损: {result['avg_loss']:.2f}%
+
+━━━━━━━━━━━━━━━
+💡 **建议**
+━━━━━━━━━━━━━━━
+"""
+
+            # 根据胜率给出建议
+            if result['win_rate'] >= 60:
+                report += "✅ 胜率优秀，策略有效！"
+            elif result['win_rate'] >= 45:
+                report += "⚠️ 胜率一般，建议优化参数。"
+            else:
+                report += "❌ 胜率偏低，建议重新设计策略。"
+
+            if result['profit_loss_ratio'] >= 1.5:
+                report += "\n✅ 盈亏比健康，风险控制良好。"
+            elif result['profit_loss_ratio'] >= 1.0:
+                report += "\n⚠️ 盈亏比一般，注意止损。"
+            else:
+                report += "\n❌ 盈亏比过低，需要优化止盈止损。"
+
+            await msg.edit_text(report, parse_mode=ParseMode.MARKDOWN)
+
+        except Exception as e:
+            logger.error(f"回测命令执行失败: {e}")
+            await update.message.reply_text(f"❌ 回测失败: {str(e)}")
+
+
 # ================= 指令函数 =================
 
 async def add_stock_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -312,6 +393,10 @@ async def dashboard_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 🔗 **点击访问**: {dashboard_url}"""
     await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
 
+async def backtest_command(u, c):
+    """回测命令包装函数"""
+    await c.bot_data['analyzer'].backtest_handler(update=u, context=c)
+
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = """🤖 **AI 投资助理 (专业版)**
 
@@ -321,9 +406,18 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 🎮 **常用指令**：
 /analyze - 手动巡逻
-/dashboard - 打开网页指挥室 🔥
+/backtest [天数] [策略] - 回测历史信号 🔥
+/dashboard - 打开网页指挥室
 /status - 检查状态
-/add `代码` - 监控持仓"""
+/add `代码` - 监控持仓
+
+📊 **回测策略**:
+hold_3_days - 持有3天
+hold_5_days - 持有5天
+stop_loss_5 - 止损5%
+target_profit_10 - 止盈10%
+
+💡 示例: `/backtest 30 hold_3_days`"""
     await update.message.reply_text(help_text, parse_mode=ParseMode.MARKDOWN)
 
 # 封装 wrapper 以便 context 调用
@@ -357,6 +451,7 @@ async def post_init(app):
     
     commands = [
         BotCommand("analyze", "👮 手动巡逻"),
+        BotCommand("backtest", "🔬 回测历史信号"),
         BotCommand("dashboard", "📊 量化指挥室"),
         BotCommand("status", "🏥 系统状态"),
         BotCommand("deepseek", "🧠 问DeepSeek"),
@@ -389,6 +484,7 @@ def run_bot():
             
             app.add_handler(CommandHandler('start', start_command))
             app.add_handler(CommandHandler('analyze', analyze_command))
+            app.add_handler(CommandHandler('backtest', backtest_command))
             app.add_handler(CommandHandler('status', status_command))
             app.add_handler(CommandHandler('futures', futures_command))
             app.add_handler(CommandHandler('dashboard', dashboard_command))
