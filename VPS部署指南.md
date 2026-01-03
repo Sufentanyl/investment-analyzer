@@ -1,6 +1,6 @@
 # 🚀 VPS Git 配置完整指南
 
-> VPS: ***REMOVED***
+> VPS: 
 > 项目: investment-analyzer + media-brain
 
 ---
@@ -8,11 +8,11 @@
 ## 📋 准备工作
 
 **需要的信息**：
-- [ ] VPS IP 地址：`***REMOVED***` ✅
+- [ ] VPS IP 地址：`       ` ✅
 - [ ] VPS root 密码：`__________`（你需要填写）
 - [ ] GitHub 用户名：`Sufentanyl`（你需要填写）
 - [ ] GitHub 邮箱：`__________`（你需要填写）
-- [ ] GitHub 仓库地址：`https://github.com/Sufentanyl/investment-analyzer.git`
+- [ ] GitHub 仓库地址：`  `
 - [ ] GitHub Token（可选，用于推送代码）：`__________`
 
 ---
@@ -52,7 +52,7 @@
 **方法 1：使用 WinSCP（推荐新手）**
 1. 打开 WinSCP
 2. 连接到 VPS：
-   - IP: `***REMOVED***`
+   - IP: ``
    - 端口: `22`
    - 用户名: `root`
    - 密码: 你的 VPS 密码
@@ -63,9 +63,7 @@
 
 **方法 2：使用 SCP 命令**
 ```bash
-# 在本地项目目录打开 PowerShell/CMD
-scp setup-vps.sh root@***REMOVED***:~/
-scp update-all.sh root@***REMOVED***:~/
+
 ```
 
 ### 第二步：SSH 登录 VPS
@@ -131,7 +129,7 @@ Your GitHub repository URL:
 ### 第一步：SSH 登录 VPS
 
 ```bash
-ssh root@***REMOVED***
+ssh 
 ```
 
 ### 第二步：安装 Git
