@@ -1,0 +1,65 @@
+version: "3.9"
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: investment-redis
+    restart: unless-stopped
+    network_mode: "host"
+    volumes:
+      - ./redis/data:/data
+    # 🟢 新增：健康检查，确保 Redis 真的活了才让别人连
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  investment-analyzer:
+    build: .
+    container_name: investment-analyzer
+    restart: unless-stopped
+    network_mode: "host"
+    depends_on:
+      redis:
+        # 🟢 新增：必须等 Redis 健康检查通过
+        condition: service_healthy
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./src:/app/src
+      - ./config.yaml:/app/config.yaml
+    environment:
+      - REDIS_HOST=127.0.0.1
+      - TZ=Asia/Shanghai
+    env_file:
+      - .env
+    command: python -u /app/src/main.py
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  dashboard:
+    build: .
+    container_name: investment-dashboard
+    restart: unless-stopped
+    network_mode: "host"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./src:/app/src
+    environment:
+      - TZ=Asia/Shanghai
+    env_file:
+      - .env
+    depends_on:
+      - investment-analyzer
+    # 端口 80，配合你的 ESA 加速
+    command: streamlit run /app/src/dashboard.py --server.port 80 --server.address 0.0.0.0
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
