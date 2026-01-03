@@ -346,6 +346,25 @@ class AdvancedInvestmentAnalyzer:
             logger.error(f"回测命令执行失败: {e}")
             await update.message.reply_text(f"❌ 回测失败: {str(e)}")
 
+    async def clear_positions_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """处理清空持仓命令"""
+        config = self.llm_analyzer.config
+
+        if not config['my_positions']:
+            await update.message.reply_text("⚠️ 持仓列表已经是空的")
+            return
+
+        cleared_positions = ", ".join(config['my_positions'])
+        config['my_positions'] = []
+        self.llm_analyzer.save_config()
+
+        await update.message.reply_text(
+            f"🗑️ 已清空持仓列表：{cleared_positions}\n\n"
+            f"💡 现在可以添加A股代码了\n"
+            f"例如：`/add 600519`（贵州茅台）",
+            parse_mode=ParseMode.MARKDOWN
+        )
+
 
 # ================= 指令函数 =================
 
@@ -371,10 +390,25 @@ async def del_stock_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def list_config_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     config = context.bot_data['analyzer'].llm_analyzer.config
-    positions = ", ".join(config['my_positions'])
-    keywords = ", ".join(list(config['concept_db'].keys())[:10]) + "..."
+    positions = ", ".join(config['my_positions']) if config['my_positions'] else "（空）"
+    keywords = ", ".join(list(config['concept_db'].keys())[:10]) if config['concept_db'] else "（空）"
     msg = f"📋 **当前配置**\n\n🏦 **持仓监控**: {positions}\n\n🔑 **关键词库**: {keywords}"
     await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
+
+async def clear_positions_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """清空持仓列表"""
+    analyzer = context.bot_data['analyzer']
+    config = analyzer.llm_analyzer.config
+
+    if not config['my_positions']:
+        await update.message.reply_text("⚠️ 持仓列表已经是空的")
+        return
+
+    cleared_positions = ", ".join(config['my_positions'])
+    config['my_positions'] = []
+    analyzer.llm_analyzer.save_config()
+
+    await update.message.reply_text(f"🗑️ 已清空持仓列表：{cleared_positions}\n\n💡 现在可以添加A股代码了\n例如：`/add 600519`", parse_mode=ParseMode.MARKDOWN)
 
 async def bind_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(context.args) < 2:
@@ -412,6 +446,10 @@ async def backtest_30d_command(u, c):
 async def backtest_90d_command(u, c):
     """回测最近90天"""
     await c.bot_data['analyzer'].backtest_handler(update=u, context=c, days=90, strategy='hold_3_days')
+
+async def clear_command(u, c):
+    """清空持仓命令包装函数"""
+    await c.bot_data['analyzer'].clear_positions_handler(update=u, context=c)
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = """🤖 **AI 投资助理 (专业版)**
@@ -451,11 +489,19 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 `/qwen [问题]` - 问 Qwen
 
 ━━━━━━━━━━━━━━━
-💡 **使用示例**
+💡 **A股使用示例**
 ━━━━━━━━━━━━━━━
+`/add 600519` - 添加贵州茅台
+`/add 300750` - 添加宁德时代
 `/backtest 30 hold_3_days`
-`/add NVDA`
-`/deepseek 分析英伟达`"""
+`/deepseek 分析茅台最新走势`
+
+━━━━━━━━━━━━━━━
+📌 **说明**
+━━━━━━━━━━━━━━━
+• 持仓股票：信号阈值降低到0.7（更敏感）
+• 非持仓股票：信号阈值0.8
+• 支持A股（6/0/3开头）和美股代码"""
     await update.message.reply_text(help_text, parse_mode=ParseMode.MARKDOWN)
 
 # 封装 wrapper 以便 context 调用
@@ -498,6 +544,7 @@ async def post_init(app):
         BotCommand("dashboard", "🖥️ 量化指挥室"),
         BotCommand("add", "➕ 添加持仓"),
         BotCommand("del", "➖ 删除持仓"),
+        BotCommand("clear", "🗑️ 清空持仓"),
         BotCommand("list", "📋 配置列表"),
         BotCommand("bind", "🔗 绑定关键词"),
         BotCommand("deepseek", "🧠 问DeepSeek"),
@@ -538,6 +585,7 @@ def run_bot():
             app.add_handler(CommandHandler('dashboard', dashboard_command))
             app.add_handler(CommandHandler('add', add_stock_command))
             app.add_handler(CommandHandler('del', del_stock_command))
+            app.add_handler(CommandHandler('clear', clear_command))
             app.add_handler(CommandHandler('list', list_config_command))
             app.add_handler(CommandHandler('bind', bind_command))
             app.add_handler(CommandHandler('deepseek', chat_handler_wrapper))
