@@ -44,6 +44,15 @@ venv/
 .DS_Store
 .claude/settings.local.json
 
+# ========================================
+# 文档文件（本地保留，不同步到VPS）
+# ========================================
+# 以下文档文件只保留在GitHub，VPS不需要
+VPS部署指南.md
+Git设置图文指南.md
+BUGFIX_SUMMARY.md
+EMERGENCY-SECURITY-FIX.md
+README.md
 
 # ========================================
 # 系统文件
