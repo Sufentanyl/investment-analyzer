@@ -472,12 +472,77 @@ async def autobind_off_command(update: Update, context: ContextTypes.DEFAULT_TYP
     )
 
 async def bind_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if len(context.args) < 2:
-        await update.message.reply_text("❌ 用法: `/bind 关键词 股票代码`")
+    """绑定关键词到股票，支持多种用法"""
+    if not context.args:
+        await update.message.reply_text(
+            "❌ 用法错误\n\n"
+            "📌 **支持的用法：**\n"
+            "• `/bind 关键词 股票代码` - 绑定单个关键词\n"
+            "• `/bind 关键词1,关键词2 股票代码` - 绑定多个关键词到一只股票\n"
+            "• `/bind 关键词 股票1,股票2,股票3` - 绑定一个关键词到多只股票\n\n"
+            "💡 **示例：**\n"
+            "`/bind AI芯片 600030` - AI芯片→中科曙光\n"
+            "`/bind AI芯片,半导体 600030` - AI芯片和半导体→中科曙光\n"
+            "`/bind AI芯片 600030,688981` - AI芯片→中科曙光+中芯国际",
+            parse_mode=ParseMode.MARKDOWN
+        )
         return
-    keyword, code = context.args[0], context.args[1]
-    context.bot_data['analyzer'].llm_analyzer.bind_keyword(keyword, code)
-    await update.message.reply_text(f"🔗 已绑定: '{keyword}' -> {code}")
+
+    analyzer = context.bot_data['analyzer']
+    args = list(context.args)
+
+    # 判断最后一个参数是否是股票代码（数字或字母+数字）
+    last_arg = args[-1]
+
+    # 如果最后一个参数包含逗号，说明是多个股票
+    if ',' in last_arg:
+        # 用法: /bind 关键词 股票1,股票2,股票3
+        keywords = args[:-1]  # 前面的都是关键词
+        stock_codes = last_arg.split(',')
+
+        # 如果只有一个关键词
+        if len(keywords) == 1:
+            keyword = keywords[0]
+            bound_stocks = []
+            for code in stock_codes:
+                code = code.strip()
+                analyzer.llm_analyzer.bind_keyword(keyword, code)
+                bound_stocks.append(code)
+
+            await update.message.reply_text(
+                f"🔗 **已绑定关键词到多只股票**\n\n"
+                f"🔑 关键词: `{keyword}`\n"
+                f"📊 股票: {', '.join(bound_stocks)}",
+                parse_mode=ParseMode.MARKDOWN
+            )
+        else:
+            await update.message.reply_text("❌ 参数错误：多个关键词只能绑定到一只股票", parse_mode=ParseMode.MARKDOWN)
+        return
+
+    # 判断第一个参数是否包含逗号（多个关键词）
+    if ',' in args[0]:
+        # 用法: /bind 关键词1,关键词2,关键词3 股票代码
+        keywords = args[0].split(',')
+        stock_code = args[1]
+
+        bound_keywords = []
+        for keyword in keywords:
+            keyword = keyword.strip()
+            analyzer.llm_analyzer.bind_keyword(keyword, stock_code)
+            bound_keywords.append(keyword)
+
+        await update.message.reply_text(
+            f"🔗 **已绑定多个关键词到股票**\n\n"
+            f"📊 股票代码: `{stock_code}`\n"
+            f"🔑 关键词: {', '.join([f'`{k}`' for k in bound_keywords])}",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        return
+
+    # 默认用法: /bind 关键词 股票代码
+    keyword, code = args[0], args[1]
+    analyzer.llm_analyzer.bind_keyword(keyword, code)
+    await update.message.reply_text(f"🔗 已绑定: `{keyword}` → `{code}`", parse_mode=ParseMode.MARKDOWN)
 
 async def dashboard_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     dashboard_url = "https://streamlit.jingyibing.top"
