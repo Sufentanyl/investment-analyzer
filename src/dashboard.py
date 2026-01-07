@@ -220,7 +220,7 @@ def show_main_dashboard():
     tab1, tab2, tab3, tab4 = st.tabs(["📈 我的持仓", "🚀 核心情报流", "📊 深度数据分析", "🔬 回测结果"])
 
     # ================= 📈 我的持仓 (新增) =================
-    with tab4:
+    with tab1:
         st.markdown("## 📈 我的持仓监控")
 
         # 读取配置
@@ -297,7 +297,7 @@ def show_main_dashboard():
                     else:
                         st.info("📭 暂无该股票的信号数据")
 
-    with tab1:
+    with tab2:
         # 过滤器
         filter_col1, filter_col2 = st.columns([1, 3])
         with filter_col1:
@@ -346,7 +346,7 @@ def show_main_dashboard():
                     if confidence_col and confidence_col in row.index:
                         st.metric("AI置信度", f"{row[confidence_col] * 100:.0f}%")
 
-    with tab2:
+    with tab3:
         c1, c2 = st.columns(2)
         with c1:
             st.subheader("AI 关注板块热力图")
@@ -362,7 +362,7 @@ def show_main_dashboard():
             fig2 = px.histogram(df, x="confidence", nbins=20, title="AI 决策置信度分布")
             st.plotly_chart(fig2, use_container_width=True)
 
-    with tab3:
+    with tab4:
         st.subheader("🔬 历史回测结果")
 
         # 加载回测数据
