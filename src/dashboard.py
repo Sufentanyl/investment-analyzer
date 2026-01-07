@@ -181,9 +181,9 @@ def show_main_dashboard():
     df = load_data()
     
     if df.empty:
-        st.info("⏳ 暂无信号数据，请等待 AI 巡逻...")
+        st.warning("⏳ 暂无信号数据，请等待 AI 巡逻...")
         if st.button("手动刷新"): st.rerun()
-        return
+        # 🔥 修复: 不要return，继续显示tab结构
 
     # 2. 顶部仪表盘 (KPIs)
     col1, col2, col3, col4 = st.columns(4)
