@@ -50,14 +50,24 @@ class LLMAnalyzer:
         self.gemini_keys = [k.strip() for k in keys_str.split(',') if k.strip()]
         self.gemini_model = os.getenv("GEMINI_MODEL", "gemini-1.5-flash").strip()
 
+        # 🔥 新增: Kimi API (替补)
+        self.kimi_key = os.getenv("KIMI_API_KEY")
+        self.kimi_base = os.getenv("KIMI_BASE_URL", "https://api.moonshot.cn/v1")
+        self.kimi_model = "moonshot-v1-8k"
+
         # 2. 核心组件
         self.ta = TechnicalAnalyzer()
         self.db = DatabaseManager()
         self.client_ds = None
         self.client_qwen = None
+        self.client_kimi = None  # 🔥 新增
 
         # 🔥 修复: aiohttp session 复用
         self._aiohttp_session = None
+
+        # 🔥 新增: Telegram Bot (用于发送fallback通知)
+        self.telegram_bot = None
+        self.chat_id = None
 
         try:
             self.memory = RAGMemory()
@@ -72,11 +82,18 @@ class LLMAnalyzer:
         self.threshold_hold = 0.7
         self.threshold_normal = 0.8
 
+    def set_telegram_bot(self, bot, chat_id):
+        """🔥 新增: 设置Telegram Bot用于发送通知"""
+        self.telegram_bot = bot
+        self.chat_id = chat_id
+
     def _ensure_clients(self):
         if not self.client_ds and self.deepseek_key:
             self.client_ds = AsyncOpenAI(api_key=self.deepseek_key, base_url=self.deepseek_base)
         if not self.client_qwen and self.qwen_key:
             self.client_qwen = AsyncOpenAI(api_key=self.qwen_key, base_url=self.qwen_base)
+        if not self.client_kimi and self.kimi_key:
+            self.client_kimi = AsyncOpenAI(api_key=self.kimi_key, base_url=self.kimi_base)
 
     async def _get_aiohttp_session(self):
         """🔥 修复: 复用 aiohttp.ClientSession"""
@@ -292,7 +309,11 @@ class LLMAnalyzer:
 
     @retry_async()
     async def _call_gemini_text(self, prompt: str) -> str:
-        if not self.gemini_keys: return "Gemini Key缺失"
+        """调用Gemini API，失败时fallback到Kimi"""
+        if not self.gemini_keys:
+            logger.warning("Gemini Key缺失，使用Kimi替补")
+            return await self._call_kimi_text(prompt)
+
         key = random.choice(self.gemini_keys)
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.gemini_model}:generateContent?key={key}"
         try:
@@ -302,11 +323,60 @@ class LLMAnalyzer:
                 if resp.status == 200:
                     data = await resp.json()
                     return data['candidates'][0]['content']['parts'][0]['text']
+                elif resp.status == 429:
+                    logger.warning(f"Gemini API 配额用尽 (HTTP 429)，切换到Kimi替补")
+                    await self._send_fallback_notification("Gemini", "配额用尽")
+                    return await self._call_kimi_text(prompt)
                 else:
                     logger.warning(f"Gemini API 错误: {resp.status}")
+                    await self._send_fallback_notification("Gemini", f"HTTP {resp.status}")
+                    return await self._call_kimi_text(prompt)
         except Exception as e:
             logger.error(f"Gemini 调用异常: {e}")
-        return ""
+            await self._send_fallback_notification("Gemini", str(e))
+            return await self._call_kimi_text(prompt)
+
+    async def _call_kimi_text(self, prompt: str) -> str:
+        """🔥 新增: 调用Kimi API作为替补"""
+        if not self.kimi_key:
+            logger.error("Kimi API Key缺失，无法替补")
+            return ""
+
+        self._ensure_clients()
+        if not self.client_kimi:
+            logger.error("Kimi客户端初始化失败")
+            return ""
+
+        try:
+            resp = await self.client_kimi.chat.completions.create(
+                model=self.kimi_model,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            return resp.choices[0].message.content
+        except Exception as e:
+            logger.error(f"Kimi替补调用也失败: {e}")
+            return ""
+
+    async def _send_fallback_notification(self, api_name: str, reason: str):
+        """🔥 新增: 发送API切换通知到Telegram"""
+        if not self.telegram_bot or not self.chat_id:
+            return
+
+        try:
+            msg = f"⚠️ **API切换通知**\n\n"
+            msg += f"🔴 {api_name} API异常\n"
+            msg += f"📝 原因: {reason}\n"
+            msg += f"✅ 已自动切换到Kimi替补\n"
+            msg += f"⏰ {datetime.now(pytz.timezone('Asia/Shanghai')).strftime('%H:%M')}"
+
+            await self.telegram_bot.send_message(
+                chat_id=self.chat_id,
+                text=msg,
+                parse_mode=ParseMode.MARKDOWN
+            )
+            logger.info(f"已发送API切换通知: {api_name} -> Kimi")
+        except Exception as e:
+            logger.error(f"发送Telegram通知失败: {e}")
 
     async def _call_gemini_json(self, prompt: str) -> Dict:
         text = await self._call_gemini_text(prompt + "\n请务必只输出 JSON，不要 Markdown。")
