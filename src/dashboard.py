@@ -119,6 +119,19 @@ def load_data():
         st.error(f"❌ 数据读取失败: {e}")
         return pd.DataFrame()
 
+def load_user_config():
+    """🔥 新增: 读取用户配置（持仓、关键词等）"""
+    config_path = '/app/data/user_config.json'
+    if not os.path.exists(config_path):
+        return {"my_positions": [], "concept_db": {}}
+
+    try:
+        import json
+        with open(config_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception as e:
+        st.error(f"❌ 配置读取失败: {e}")
+        return {"my_positions": [], "concept_db": {}}
 
 def load_backtest_results():
     """读取回测结果"""
@@ -204,7 +217,85 @@ def show_main_dashboard():
     st.divider()
 
     # 3. 核心功能区
-    tab1, tab2, tab3 = st.tabs(["🚀 核心情报流", "📊 深度数据分析", "🔬 回测结果"])
+    tab1, tab2, tab3, tab4 = st.tabs(["📈 我的持仓", "🚀 核心情报流", "📊 深度数据分析", "🔬 回测结果"])
+
+    # ================= 📈 我的持仓 (新增) =================
+    with tab4:
+        st.markdown("## 📈 我的持仓监控")
+
+        # 读取配置
+        config = load_user_config()
+        my_positions = config.get('my_positions', [])
+
+        if not my_positions:
+            st.info("📭 暂无持仓股票，请在Telegram中使用 `/add 股票代码` 添加持仓")
+            st.caption("例如: `/add 600519` 添加贵州茅台")
+        else:
+            # 持仓概览卡片
+            st.markdown("### 📊 持仓概览")
+
+            # 过滤持仓信号
+            position_signals = df[df['stock_code'].isin(my_positions)] if not df.empty else pd.DataFrame()
+
+            col1, col2, col3, col4 = st.columns(4)
+
+            with col1:
+                st.metric("持仓数量", f"{len(my_positions)} 只")
+            with col2:
+                today_pos_signals = position_signals[position_signals['created_at'].dt.date == today] if not position_signals.empty else pd.DataFrame()
+                st.metric("今日持仓信号", f"{len(today_pos_signals)} 条")
+            with col3:
+                if not position_signals.empty and 'win_rate_val' in position_signals.columns:
+                    avg_win_rate = position_signals['win_rate_val'].mean()
+                    st.metric("持仓平均胜率", f"{avg_win_rate:.1f}%")
+                else:
+                    st.metric("持仓平均胜率", "--")
+            with col4:
+                st.metric("最新更新", df['created_at'].iloc[0].strftime("%H:%M") if not df.empty else "--:--")
+
+            st.divider()
+
+            # 持仓列表
+            st.markdown("### 🎯 持仓详情")
+
+            for stock_code in my_positions:
+                with st.expander(f"📌 {stock_code}"):
+                    # 获取该股票的信号
+                    stock_signals = position_signals[position_signals['stock_code'] == stock_code] if not position_signals.empty else pd.DataFrame()
+
+                    if not stock_signals.empty:
+                        # 显示最新信号
+                        latest_signal = stock_signals.iloc[0]
+                        col1, col2, col3 = st.columns(3)
+
+                        with col1:
+                            signal_icon = "🔥" if latest_signal.get('signal') == 'positive' else "🔻" if latest_signal.get('signal') == 'negative' else "⚪"
+                            st.markdown(f"**最新信号**: {signal_icon} {latest_signal.get('signal', 'N/A').upper()}")
+
+                        with col2:
+                            confidence = latest_signal.get('confidence', 0)
+                            st.markdown(f"**AI信心**: {confidence:.2f}")
+
+                        with col3:
+                            created_at = latest_signal.get('created_at')
+                            if isinstance(created_at, str):
+                                created_at = pd.to_datetime(created_at)
+                            st.markdown(f"**时间**: {created_at.strftime('%m-%d %H:%M')}")
+
+                        # 显示理由
+                        with st.container():
+                            st.markdown("**AI分析理由**:")
+                            st.info(latest_signal.get('reason', '暂无分析'))
+
+                        # 显示历史信号
+                        if len(stock_signals) > 1:
+                            st.markdown("**历史信号**:")
+                            for idx, signal in stock_signals.iloc[1:min(4, len(stock_signals))].iterrows():
+                                sig_emoji = "🔥" if signal.get('signal') == 'positive' else "🔻" if signal.get('signal') == 'negative' else "⚪"
+                                created_at = pd.to_datetime(signal.get('created_at'))
+                                st.caption(f"{sig_emoji} {created_at.strftime('%m-%d %H:%M')} - 信心:{signal.get('confidence', 0):.2f}")
+                    else:
+                        st.info("📭 暂无该股票的信号数据")
 
     with tab1:
         # 过滤器

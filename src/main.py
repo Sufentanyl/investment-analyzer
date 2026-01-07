@@ -59,6 +59,8 @@ class AdvancedInvestmentAnalyzer:
         
         self.news_collector = AdvancedNewsCollector()
         self.llm_analyzer = LLMAnalyzer()
+        # 🔥 新增: 设置Telegram Bot用于发送API切换通知
+        self.llm_analyzer.set_telegram_bot(self.telegram_bot, self.chat_id)
         self.gap_detector = InformationGapDetector()
         self.futures_watcher = FuturesWatcher()
         self.backtester = LightweightBacktester()  # 回测引擎
