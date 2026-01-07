@@ -19,7 +19,7 @@ class InformationGapDetector:
         # 2. 加载 Qwen 配置 (用于把英文标题转成中文搜索词)
         self.qwen_key = os.getenv("QWEN_API_KEY")
         self.qwen_base = os.getenv("QWEN_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
-        self.qwen_model = "qwen-max" # 用 Max 保证理解准确，或者 plus 也可以
+        self.qwen_model = os.getenv("QWEN_MODEL", "qwen-plus")
 
         # 3. 缓存 (🔥 修复: 改用 OrderedDict 限制大小，防止内存泄漏)
         self.cache = OrderedDict()
