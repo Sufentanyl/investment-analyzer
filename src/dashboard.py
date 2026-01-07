@@ -352,7 +352,7 @@ def show_main_dashboard():
 
                     with c2:
                         st.markdown("#### ⚖️ 量化评分")
-                        win_rate = row['win_rate_val']
+                        win_rate = row.get('win_rate_val', 0)
                         if win_rate > 0:
                             st.progress(win_rate / 100, text=f"历史胜率: {win_rate}%")
                             if win_rate < 40:
