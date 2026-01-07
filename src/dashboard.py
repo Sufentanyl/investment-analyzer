@@ -435,7 +435,7 @@ def show_main_dashboard():
                     with col1:
                         st.metric("总信号", row['total_signals'])
                     with col2:
-                        win_rate = row['win_rate']
+                        win_rate = row.get('win_rate', 0)
                         delta_color = "normal" if win_rate >= 50 else "inverse"
                         st.metric("胜率", f"{win_rate:.1f}%", delta=f"{win_rate-50:.1f}%", delta_color=delta_color)
                     with col3:
