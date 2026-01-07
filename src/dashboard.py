@@ -133,6 +133,23 @@ def load_user_config():
         st.error(f"❌ 配置读取失败: {e}")
         return {"my_positions": [], "concept_db": {}}
 
+def get_stock_name(stock_code):
+    """🔥 新增: 获取股票名称"""
+    # 常用A股股票代码映射
+    stock_names = {
+        '600276': '恒瑞医药',
+        '600900': '长江电力',
+        '600519': '贵州茅台',
+        '000858': '五粮液',
+        '601318': '中国平安',
+        '600036': '招商银行',
+        '000001': '平安银行',
+        '601012': '隆基绿能',
+        '300750': '宁德时代',
+        '688981': '中芯国际',
+    }
+    return stock_names.get(stock_code, stock_code)
+
 def load_backtest_results():
     """读取回测结果"""
     db_path = get_db_path()
@@ -275,7 +292,8 @@ def show_main_dashboard():
             st.markdown("### 🎯 持仓详情")
 
             for stock_code in my_positions:
-                with st.expander(f"📌 {stock_code}"):
+                stock_name = get_stock_name(stock_code)
+                with st.expander(f"📌 {stock_code} {stock_name}"):
                     # 获取该股票的信号
                     stock_signals = position_signals[position_signals['stock_code'] == stock_code] if not position_signals.empty else pd.DataFrame()
 
