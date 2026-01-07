@@ -200,8 +200,6 @@ def show_main_dashboard():
         with col3:
             st.metric("市场AI情绪", "暂无数据")
         with col4:
-            from datetime import datetime
-            import pytz
             now = datetime.now(pytz.timezone('Asia/Shanghai'))
             st.metric("最新更新", now.strftime("%H:%M"))
     else:
