@@ -188,6 +188,9 @@ def show_main_dashboard():
     # 2. 顶部仪表盘 (KPIs)
     col1, col2, col3, col4 = st.columns(4)
 
+    # 🔥 修复: 提前定义signal_col，避免后面引用时出错
+    signal_col = 'signal' if 'signal' in df.columns else ('signal_type' if 'signal_type' in df.columns else None)
+
     # 🔥 修复: 如果df为空，显示占位数据
     if df.empty:
         with col1:
@@ -205,9 +208,6 @@ def show_main_dashboard():
         # 计算今日信号
         today = datetime.now(pytz.timezone('Asia/Shanghai')).date()
         df_today = df[df['created_at'].dt.date == today]
-
-        # 🔥 修复: 列名兼容性处理
-        signal_col = 'signal' if 'signal' in df.columns else ('signal_type' if 'signal_type' in df.columns else None)
 
         with col1:
             st.metric("今日情报", f"{len(df_today)} 条", delta=f"总计 {len(df)}")
