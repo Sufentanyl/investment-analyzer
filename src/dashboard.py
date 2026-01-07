@@ -312,69 +312,83 @@ def show_main_dashboard():
                         st.info("📭 暂无该股票的信号数据")
 
     with tab2:
-        # 过滤器
-        filter_col1, filter_col2 = st.columns([1, 3])
-        with filter_col1:
-            min_win = st.slider("最低历史胜率要求 (%)", 0, 100, 50)
-        
-        # 筛选显示
-        display_df = df[df['win_rate_val'] >= min_win]
-        
-        for index, row in display_df.iterrows():
-            # 🔥 修复: 列名兼容
-            signal_value = row[signal_col] if signal_col else 'neutral'
-            card_color = "🟢" if signal_value == 'positive' else "🔴" if signal_value == 'negative' else "⚪"
+        # 🔥 修复: 如果df为空，显示提示
+        if df.empty:
+            st.info("📭 暂无信号数据，请等待 AI 巡逻...")
+        else:
+            # 过滤器
+            filter_col1, filter_col2 = st.columns([1, 3])
+            with filter_col1:
+                min_win = st.slider("最低历史胜率要求 (%)", 0, 100, 50)
 
-            # 🔥 修复: 列名兼容
-            stock_code_col = 'stock_code' if 'stock_code' in row.index else ('code' if 'code' in row.index else '未知')
-            news_title_col = 'news_title' if 'news_title' in row.index else ('title' if 'title' in row.index else '未知')
+            # 筛选显示
+            if 'win_rate_val' in df.columns:
+                display_df = df[df['win_rate_val'] >= min_win]
+            else:
+                display_df = df
 
-            with st.expander(f"{card_color} {row[stock_code_col]} | {row[news_title_col]} ({row['created_at'].strftime('%m-%d %H:%M')})"):
-                
-                c1, c2 = st.columns([2, 1])
-                
-                with c1:
-                    st.markdown("#### 🧠 AI 辩论结论")
-                    st.info(row['reason'])
-                    st.markdown("**摘要/技术面：**")
-                    st.text(row['summary'])
+            for index, row in display_df.iterrows():
+                # 🔥 修复: 列名兼容
+                signal_value = row[signal_col] if signal_col else 'neutral'
+                card_color = "🟢" if signal_value == 'positive' else "🔴" if signal_value == 'negative' else "⚪"
 
-                with c2:
-                    st.markdown("#### ⚖️ 量化评分")
-                    win_rate = row['win_rate_val']
-                    if win_rate > 0:
-                        st.progress(win_rate / 100, text=f"历史胜率: {win_rate}%")
-                        if win_rate < 40:
-                            st.warning("⚠️ 警告：历史骗线概率高")
-                        elif win_rate > 70:
-                            st.success("🔥 极佳：历史股性活跃")
-                    else:
-                        st.caption("暂无回测数据")
+                # 🔥 修复: 列名兼容
+                stock_code_col = 'stock_code' if 'stock_code' in row.index else ('code' if 'code' in row.index else '未知')
+                news_title_col = 'news_title' if 'news_title' in row.index else ('title' if 'title' in row.index else '未知')
 
-                    # 🔥 修复: 列名兼容
-                    price_col = 'price_at_signal' if 'price_at_signal' in row.index else ('price' if 'price' in row.index else '现价')
-                    price_value = row[price_col] if price_col in row.index else 0
+                with st.expander(f"{card_color} {row[stock_code_col]} | {row[news_title_col]} ({row['created_at'].strftime('%m-%d %H:%M')})"):
 
-                    st.metric("现价", f"¥{price_value}")
-                    confidence_col = 'confidence' if 'confidence' in row.index else None
-                    if confidence_col and confidence_col in row.index:
-                        st.metric("AI置信度", f"{row[confidence_col] * 100:.0f}%")
+                    c1, c2 = st.columns([2, 1])
+
+                    with c1:
+                        st.markdown("#### 🧠 AI 辩论结论")
+                        st.info(row['reason'])
+                        st.markdown("**摘要/技术面：**")
+                        st.text(row['summary'])
+
+                    with c2:
+                        st.markdown("#### ⚖️ 量化评分")
+                        win_rate = row['win_rate_val']
+                        if win_rate > 0:
+                            st.progress(win_rate / 100, text=f"历史胜率: {win_rate}%")
+                            if win_rate < 40:
+                                st.warning("⚠️ 警告：历史骗线概率高")
+                            elif win_rate > 70:
+                                st.success("🔥 极佳：历史股性活跃")
+                        else:
+                            st.caption("暂无回测数据")
+
+                        # 🔥 修复: 列名兼容
+                        price_col = 'price_at_signal' if 'price_at_signal' in row.index else ('price' if 'price' in row.index else '现价')
+                        price_value = row[price_col] if price_col in row.index else 0
+
+                        st.metric("现价", f"¥{price_value}")
+                        confidence_col = 'confidence' if 'confidence' in row.index else None
+                        if confidence_col and confidence_col in row.index:
+                            st.metric("AI置信度", f"{row[confidence_col] * 100:.0f}%")
 
     with tab3:
-        c1, c2 = st.columns(2)
-        with c1:
-            st.subheader("AI 关注板块热力图")
-            if 'concept' in df.columns:
-                concept_counts = df['concept'].value_counts().head(10)
-                fig = px.bar(concept_counts, orientation='h', title="热门概念 Top 10")
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.info("需积累更多带'概念'字段的数据后显示")
+        # 🔥 修复: 如果df为空，显示提示
+        if df.empty:
+            st.info("📭 暂无信号数据，请等待 AI 巡逻...")
+        else:
+            c1, c2 = st.columns(2)
+            with c1:
+                st.subheader("AI 关注板块热力图")
+                if 'concept' in df.columns:
+                    concept_counts = df['concept'].value_counts().head(10)
+                    fig = px.bar(concept_counts, orientation='h', title="热门概念 Top 10")
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.info("需积累更多带'概念'字段的数据后显示")
 
-        with c2:
-            st.subheader("置信度分布")
-            fig2 = px.histogram(df, x="confidence", nbins=20, title="AI 决策置信度分布")
-            st.plotly_chart(fig2, use_container_width=True)
+            with c2:
+                st.subheader("置信度分布")
+                if 'confidence' in df.columns:
+                    fig2 = px.histogram(df, x="confidence", nbins=20, title="AI 决策置信度分布")
+                    st.plotly_chart(fig2, use_container_width=True)
+                else:
+                    st.info("暂无置信度数据")
 
     with tab4:
         st.subheader("🔬 历史回测结果")
