@@ -188,31 +188,45 @@ def show_main_dashboard():
     # 2. 顶部仪表盘 (KPIs)
     col1, col2, col3, col4 = st.columns(4)
 
-    # 计算今日信号
-    today = datetime.now(pytz.timezone('Asia/Shanghai')).date()
-    df_today = df[df['created_at'].dt.date == today]
+    # 🔥 修复: 如果df为空，显示占位数据
+    if df.empty:
+        with col1:
+            st.metric("今日情报", "0 条", delta="总计 0")
+        with col2:
+            st.metric("优质机会占比", "0%")
+        with col3:
+            st.metric("市场AI情绪", "暂无数据")
+        with col4:
+            from datetime import datetime
+            import pytz
+            now = datetime.now(pytz.timezone('Asia/Shanghai'))
+            st.metric("最新更新", now.strftime("%H:%M"))
+    else:
+        # 计算今日信号
+        today = datetime.now(pytz.timezone('Asia/Shanghai')).date()
+        df_today = df[df['created_at'].dt.date == today]
 
-    # 🔥 修复: 列名兼容性处理
-    signal_col = 'signal' if 'signal' in df.columns else ('signal_type' if 'signal_type' in df.columns else None)
+        # 🔥 修复: 列名兼容性处理
+        signal_col = 'signal' if 'signal' in df.columns else ('signal_type' if 'signal_type' in df.columns else None)
 
-    with col1:
-        st.metric("今日情报", f"{len(df_today)} 条", delta=f"总计 {len(df)}")
-    with col2:
-        # 高胜率占比
-        high_win_df = df[df['win_rate_val'] > 60]
-        ratio = len(high_win_df) / len(df) * 100 if len(df) > 0 else 0
-        st.metric("优质机会占比", f"{ratio:.1f}%", help="历史胜率 > 60% 的信号比例")
-    with col3:
-        # 多头情绪 (🔥 修复: 列名兼容)
-        if signal_col:
-            bull_count = len(df[df[signal_col] == 'positive'])
-            bear_count = len(df[df[signal_col] == 'negative'])
-        else:
-            bull_count = bear_count = 0
-        sentiment = "偏多头 🔥" if bull_count > bear_count else "偏空头 ❄️"
-        st.metric("市场AI情绪", sentiment, f"多{bull_count} : 空{bear_count}")
-    with col4:
-        st.metric("最新更新", df['created_at'].iloc[0].strftime("%H:%M") if not df.empty else "--:--")
+        with col1:
+            st.metric("今日情报", f"{len(df_today)} 条", delta=f"总计 {len(df)}")
+        with col2:
+            # 高胜率占比
+            high_win_df = df[df['win_rate_val'] > 60]
+            ratio = len(high_win_df) / len(df) * 100 if len(df) > 0 else 0
+            st.metric("优质机会占比", f"{ratio:.1f}%", help="历史胜率 > 60% 的信号比例")
+        with col3:
+            # 多头情绪 (🔥 修复: 列名兼容)
+            if signal_col:
+                bull_count = len(df[df[signal_col] == 'positive'])
+                bear_count = len(df[df[signal_col] == 'negative'])
+            else:
+                bull_count = bear_count = 0
+            sentiment = "偏多头 🔥" if bull_count > bear_count else "偏空头 ❄️"
+            st.metric("市场AI情绪", sentiment, f"多{bull_count} : 空{bear_count}")
+        with col4:
+            st.metric("最新更新", df['created_at'].iloc[0].strftime("%H:%M") if not df.empty else "--:--")
 
     st.divider()
 
