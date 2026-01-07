@@ -213,8 +213,12 @@ def show_main_dashboard():
             st.metric("今日情报", f"{len(df_today)} 条", delta=f"总计 {len(df)}")
         with col2:
             # 高胜率占比
-            high_win_df = df[df['win_rate_val'] > 60]
-            ratio = len(high_win_df) / len(df) * 100 if len(df) > 0 else 0
+            if 'win_rate_val' in df.columns:
+                high_win_df = df[df['win_rate_val'] > 60]
+                ratio = len(high_win_df) / len(df) * 100 if len(df) > 0 else 0
+            else:
+                high_win_df = pd.DataFrame()
+                ratio = 0
             st.metric("优质机会占比", f"{ratio:.1f}%", help="历史胜率 > 60% 的信号比例")
         with col3:
             # 多头情绪 (🔥 修复: 列名兼容)
