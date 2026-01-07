@@ -5,6 +5,7 @@ import json
 import hashlib
 import pytz
 import time
+import aiohttp
 from telegram import Bot, Update, BotCommand
 from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, ContextTypes, ApplicationBuilder
@@ -401,6 +402,99 @@ class AdvancedInvestmentAnalyzer:
             parse_mode=ParseMode.MARKDOWN
         )
 
+    async def check_api_usage_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """检查API使用情况"""
+        await update.message.reply_text("🔍 正在查询 API 使用情况...", parse_mode=ParseMode.MARKDOWN)
+
+        # 获取API Keys
+        gemini_keys = self.llm_analyzer.gemini_keys[:5]  # 只检查前5个
+        qwen_key = self.llm_analyzer.qwen_key
+        deepseek_key = self.llm_analyzer.deepseek_key
+
+        tz = pytz.timezone('Asia/Shanghai')
+        now = datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')
+
+        msg = f"📊 **API 使用情况**\n\n"
+        msg += f"⏰ 查询时间: {now}\n\n"
+
+        # 检查 Gemini
+        msg += "🤖 **Gemini API**\n"
+        gemini_working = 0
+        for i, key in enumerate(gemini_keys, 1):
+            try:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models?key={key}"
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(url, timeout=5) as resp:
+                        if resp.status == 200:
+                            gemini_working += 1
+                        elif resp.status == 429:
+                            pass
+            except:
+                pass
+
+        if gemini_working > 0:
+            msg += f"✅ 可用: {gemini_working}/{len(gemini_keys)} Keys\n"
+        else:
+            msg += f"❌ 所有 Keys 配额用尽\n"
+
+        # 检查 Qwen
+        msg += "\n🧠 **Qwen API**\n"
+        if qwen_key:
+            try:
+                url = "https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation"
+                headers = {"Authorization": f"Bearer {qwen_key}", "Content-Type": "application/json"}
+                payload = {
+                    "model": "qwen-max",
+                    "input": {"messages": [{"role": "user", "content": "hi"}]},
+                    "parameters": {"max_tokens": 5}
+                }
+
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(url, json=payload, headers=headers, timeout=5) as resp:
+                        if resp.status == 200:
+                            msg += "✅ 正常工作\n"
+                        elif resp.status == 429:
+                            msg += "⚠️ 配额用尽 (HTTP 429)\n"
+                        else:
+                            msg += f"❌ HTTP {resp.status}\n"
+            except Exception as e:
+                msg += f"❌ 错误: {str(e)[:50]}\n"
+        else:
+            msg += "❌ 未配置\n"
+
+        # 检查 DeepSeek
+        msg += "\n🔮 **DeepSeek API**\n"
+        if deepseek_key:
+            try:
+                url = "https://api.deepseek.com/chat/completions"
+                headers = {"Authorization": f"Bearer {deepseek_key}", "Content-Type": "application/json"}
+                payload = {
+                    "model": "deepseek-chat",
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "max_tokens": 5
+                }
+
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(url, json=payload, headers=headers, timeout=5) as resp:
+                        if resp.status == 200:
+                            msg += "✅ 正常工作\n"
+                        elif resp.status == 429:
+                            msg += "⚠️ 配额用尽 (HTTP 429)\n"
+                        else:
+                            msg += f"❌ HTTP {resp.status}\n"
+            except Exception as e:
+                msg += f"❌ 错误: {str(e)[:50]}\n"
+        else:
+            msg += "❌ 未配置\n"
+
+        # 添加说明
+        msg += "\n💡 **提示**:\n"
+        msg += "• Gemini 免费版每天太平洋时间午夜重置\n"
+        msg += "• Qwen/DeepSeek 配额较充足\n"
+        msg += "• 使用 `/status` 查看系统状态"
+
+        await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
+
 
 # ================= 指令函数 =================
 
@@ -677,6 +771,10 @@ async def autobind_off_command(u, c):
     """禁用AI自动绑定"""
     await c.bot_data['analyzer'].autobind_off_handler(update=u, context=c)
 
+async def api_usage_command(u, c):
+    """查询API使用情况"""
+    await c.bot_data['analyzer'].check_api_usage_handler(update=u, context=c)
+
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = """🤖 **AI 投资助理 (专业版)**
 
@@ -778,6 +876,7 @@ async def post_init(app):
         BotCommand("backtest_30d", "📊 回测30天"),
         BotCommand("backtest_90d", "📊 回测90天"),
         BotCommand("status", "🏥 系统状态"),
+        BotCommand("api", "📊 API使用情况"),
         BotCommand("dashboard", "🖥️ 量化指挥室"),
         BotCommand("add", "➕ 添加持仓"),
         BotCommand("del", "➖ 删除持仓"),
@@ -821,6 +920,7 @@ def run_bot():
             app.add_handler(CommandHandler('backtest_30d', backtest_30d_command))
             app.add_handler(CommandHandler('backtest_90d', backtest_90d_command))
             app.add_handler(CommandHandler('status', status_command))
+            app.add_handler(CommandHandler('api', api_usage_command))
             app.add_handler(CommandHandler('futures', futures_command))
             app.add_handler(CommandHandler('dashboard', dashboard_command))
             app.add_handler(CommandHandler('add', add_stock_command))
