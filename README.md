@@ -55,6 +55,7 @@ Telegram推送: 高价值信号实时通知
   - 识别新闻中的股票代码
   - 产业链联想（如"AI芯片"→"英伟达产业链"）
   - 英文标题翻译成中文搜索词
+  - 模型：`qwen-plus`（可通过环境变量配置）
 
 - **DeepSeek (深度求索)**：
   - 主力分析模型
@@ -66,6 +67,12 @@ Telegram推送: 高价值信号实时通知
   - 最终报告生成
   - 强制"说人话"模式（不用专业术语）
   - 多key轮询提高可用性
+  - **Kimi替补机制**：Gemini异常时自动切换到Kimi API并发送Telegram通知
+
+- **Kimi (月之暗面)** 🔥：
+  -替补API（Gemini/DeepSeek/Qwen异常时启用）
+  - 自动故障切换
+  - 确保服务高可用性
 
 ### 3. 🔍 信息差检测
 
@@ -101,11 +108,13 @@ Telegram推送: 高价值信号实时通知
 **交互命令**：
 - `/analyze` - 手动触发巡逻
 - `/status` - 查看系统状态
+- `/api` - 查看API使用情况（Gemini/Qwen/DeepSeek状态）🆕
 - `/add <股票代码>` - 添加持仓（降低信号阈值）
 - `/remove <股票代码>` - 移除持仓
 - `/list` - 查看当前持仓
-- `/bind <关键词> <股票代码>` - 绑定概念关联
+- `/bind <关键词> <股票代码>` - 绑定概念关联（支持多个关键词/股票）🆕
 - `/chat <模型> <消息>` - 与AI对话
+- `/backtest <天数> <策略>` - 运行回测（如：`/backtest 30 hold_3_days`）🆕
 
 ---
 
@@ -132,9 +141,10 @@ investment-analyzer:  # 主应用容器 (800-1200MB)
 
 dashboard:             # 可视化仪表板 (600-800MB)
   └── Streamlit Dashboard (dashboard.py)
-      ├── 实时信号流
-      ├── K线图表
-      └── 历史回测
+      ├── 📈 我的持仓（持仓监控、信号历史）🆕
+      ├── 🚀 核心情报流
+      ├── 📊 深度数据分析（板块热力图、置信度分布）
+      └── 🔬 回测结果（历史回测、策略对比）🆕
 
 redis:                 # 缓存容器 (150-300MB)
   ├── 新闻去重
@@ -181,12 +191,18 @@ src/
 3. **Qwen API** (通义千问)
    - 访问：https://dashscope.aliyuncs.com/
    - 获取API Key
+   - 默认模型：`qwen-plus`（可通过环境变量修改为qwen-max等）🆕
 
 4. **Gemini API** (Google)
    - 访问：https://makersuite.google.com/app/apikey
    - 创建API Key（建议创建多个，用逗号分隔）
 
-5. **SerpApi** (可选，用于信息差检测)
+5. **Kimi API** (月之暗面) 🆕
+   - 访问：https://platform.moonshot.cn/
+   - 注册获取API Key
+   - 用途：替补API（当其他API异常时自动切换）
+
+6. **SerpApi** (可选，用于信息差检测)
    - 访问：https://serpapi.com/
    - 注册获取API Key
 
@@ -209,11 +225,31 @@ nano .env
 # .env 文件示例
 TELEGRAM_BOT_TOKEN=你的Bot_Token
 TELEGRAM_CHAT_ID=你的Chat_ID
+
+# DeepSeek API（主力分析模型）
 DEEPSEEK_API_KEY=你的DeepSeek_Key
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+DEEPSEEK_DAILY_LIMIT=20  # 每日请求限制
+
+# Qwen API（实体识别 + 产业链联想）
 QWEN_API_KEY=你的Qwen_Key
+QWEN_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+QWEN_MODEL=qwen-plus  # 默认模型，可改为qwen-max等
+
+# Gemini API（最终报告生成）
 GEMINI_API_KEY=key1,key2,key3  # 支持多key轮询
-SERPAPI_KEY=你的SerpApi_Key    # 可选
-DASHBOARD_PASSWORD=123456       # Dashboard密码
+GEMINI_MODEL=gemini-1.5-flash
+
+# Kimi API（替补API）🆕
+KIMI_API_KEY=你的Kimi_Key
+KIMI_BASE_URL=https://api.moonshot.cn/v1
+KIMI_DAILY_LIMIT=15  # 每日请求限制
+
+# SerpApi（可选，用于信息差检测）
+SERPAPI_KEY=你的SerpApi_Key
+
+# Streamlit Dashboard
+DASHBOARD_PASSWORD=123456  # Dashboard访问密码
 ```
 
 #### 4. 启动容器
@@ -234,6 +270,12 @@ docker logs -f investment-dashboard
 ```
 http://your-vps-ip:8501
 ```
+
+**Dashboard功能** 🆕：
+- 📈 **我的持仓**：实时监控持仓股票信号，查看历史分析
+- 🚀 **核心情报流**：查看所有AI分析信号，支持筛选高胜率机会
+- 📊 **深度数据分析**：板块热力图、置信度分布、多空情绪
+- 🔬 **回测结果**：历史回测数据、策略对比、收益曲线
 
 ---
 
@@ -395,10 +437,16 @@ http://your-vps-ip:8501
 ### 4. 查看历史信号
 
 访问Dashboard：`http://your-vps-ip:8501`
-- 实时信号流
-- K线图表
-- 历史胜率统计
-- 多空情绪分析
+
+**新增功能** 🆕：
+- **持仓监控**：查看你的持仓股票及其最新AI分析
+- **信号历史**：每个股票的历史信号记录
+- **回测功能**：运行回测并查看结果
+  - `/backtest 30 hold_3_days` - 回测最近30天，持有3天策略
+  - 可用策略：hold_3_days, hold_5_days, stop_loss_5, target_profit_10
+- **板块热力图**：AI关注的热门概念Top 10
+- **多空情绪**：市场整体AI情绪分析
+- **置信度分布**：AI决策置信度统计
 
 ---
 
@@ -432,15 +480,17 @@ threshold_normal = 0.8  # 其他股票阈值
 
 **每月成本估算**（45分钟频率）：
 - DeepSeek: ¥15-20
-- Qwen: ¥15-20
+- Qwen (qwen-plus): ¥15-20
 - Gemini: ¥5-10
+- Kimi (替补): ¥5-10 🆕
 - SerpApi: ¥15-20
-- **总计: ¥150-250/月**
+- **总计: ¥150-300/月**
 
 **省钱技巧**：
 1. 延长巡逻间隔到60分钟
 2. 关闭SerpApi（不检测信息差）
-3. 只使用DeepSeek + Gemini，不用Qwen
+3. 设置每日API请求限制（DEEPSEEK_DAILY_LIMIT, KIMI_DAILY_LIMIT）🆕
+4. 利用Kimi替补机制避免主API超额收费 🆕
 
 ---
 
@@ -594,6 +644,23 @@ git commit -m "chore: 清理代码"
 
 ## 📝 更新日志
 
+### v1.2.0 (2026-01-07) 🆕
+- ✅ **Kimi替补API机制**：Gemini/DeepSeek/Qwen异常时自动切换到Kimi
+- ✅ **Dashboard持仓功能**：新增"我的持仓"页面，实时监控持仓股票信号
+- ✅ **API状态查询**：新增`/api`命令查看API使用情况
+- ✅ **Qwen模型切换**：默认模型改为qwen-plus（环境变量可配置）
+- ✅ **批量关键词绑定**：`/bind`命令支持多个关键词和股票
+- ✅ **股票名称显示**：持仓页面显示股票名称（如：600276 恒瑞医药）
+- ✅ **回测功能**：支持多种回测策略并可视化结果
+- ✅ **高可用性**：API异常自动切换并发送Telegram通知
+- ✅ **修复多个bug**：空数据处理、缩进错误、KeyError等
+
+### v1.1.0 (2026-01-05)
+- ✅ 添加A股核心关键词库
+- ✅ 优化新闻过滤机制
+- ✅ 改进多空观点分析
+- ✅ 添加技术指标权重
+
 ### v1.0.0 (2026-01-03)
 - ✅ 基础功能开发完成
 - ✅ Docker部署成功
@@ -602,10 +669,10 @@ git commit -m "chore: 清理代码"
 - ✅ 完善文档
 
 ### 已知问题
-- [ ] 添加回测系统
-- [ ] 优化LLM Prompt
-- [ ] 添加风控模块
-- [ ] 部署监控告警
+- [ ] 优化LLM Prompt（降低幻觉）
+- [ ] 添加更多回测策略
+- [ ] 实时行情推送（WebSocket）
+- [ ] 部署监控告警（Prometheus + Grafana）
 
 ---
 
