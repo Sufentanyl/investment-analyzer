@@ -44,7 +44,7 @@ class LLMAnalyzer:
 
         self.qwen_key = os.getenv("QWEN_API_KEY")
         self.qwen_base = os.getenv("QWEN_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
-        self.qwen_model = "qwen-max"
+        self.qwen_model = os.getenv("QWEN_MODEL", "qwen-plus")
 
         keys_str = os.getenv("GEMINI_API_KEY", "")
         self.gemini_keys = [k.strip() for k in keys_str.split(',') if k.strip()]

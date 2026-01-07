@@ -1,120 +1,236 @@
-# 个人量化辅助系统 - 项目上下文
+# Investment Analyzer 项目上下文
 
-> **最后更新**: 2026-01-02
-> **项目状态**: 🟡 调试阶段
-> **作者背景**: 编程小白，在 Gemini 帮助下完成
+**最后更新**: 2026-01-04
+**项目状态**: 🟢 运行正常
+**VPS地址**: ***REMOVED***
+**作者背景**: 编程小白，在AI助手帮助下完成
 
 ---
 
 ## 📋 项目概述
 
-### 功能简介
-这是一个 **AI 驱动的个人量化辅助系统**，核心功能：
-1. 收集国际财经新闻（Bloomberg、Reuters）
-2. 多 LLM 交叉验证分析（DeepSeek + Qwen）
-3. 检测信息差（国内是否已有报道）
-4. 自动推送高价值信号到 Telegram
-5. Streamlit 可视化仪表板
+AI驱动的A股量化投资助手，通过分析国际新闻、检测信息差、技术指标回测，为投资决策提供支持。
 
-### 核心创新点
+**核心功能**:
+- 🔍 国际新闻自动巡检（每45分钟）
+- 🤖 AI多模型辩论分析（Buffett vs Munger模式）
+- 📊 轻量级回测系统（4种策略）
+- 🔗 关键词自动关联股票（80个精选A股关键词）
+- 📈 实时技术指标分析
+- 💬 Telegram Bot交互
+- 🖥️ Streamlit可视化仪表板
+
+**核心创新点**:
 - ✅ **信息差检测**：搜索国内新闻判断套利机会
-- ✅ **多模型交叉验证**：降低 AI 幻觉风险
-- ✅ **"说人话"报告**：强制 Gemini 不用专业术语
-- ✅ **持仓优先级**：持仓股票阈值 0.7，其他 0.8
+- ✅ **多模型交叉验证**：降低AI幻觉风险
+- ✅ **"说人话"报告**：强制Gemini不用专业术语
+- ✅ **持仓优先级**：持仓股票阈值0.7，其他0.8
+- ✅ **A股关键词库**：80个核心概念一键导入
 
 ---
 
 ## 🏗️ 技术架构
 
-### 技术栈
-```
-Frontend:  Streamlit (K线图 + AI信号回测)
-Backend:   Python 3.11 + AsyncIO
-Database:  SQLite (信号存储) + ChromaDB (RAG记忆) + Redis (缓存)
-APIs:      yfinance, akshare, DeepSeek, Qwen, Gemini, SerpApi
-Deploy:    Docker Compose (3 容器)
-```
+### 部署环境
+- **VPS**: Los Angeles (***REMOVED***)
+- **配置**: 2.5GB RAM + 2GB Swap
+- **系统**: Docker Compose (3容器)
+  - `investment-analyzer`: 主应用
+  - `investment-dashboard`: Streamlit可视化
+  - `investment-redis`: 缓存和去重
 
-### 容器结构
-```yaml
-investment-analyzer:  # 主应用 (800-1200MB)
-  ├── 新闻收集 (news_collector.py)
-  ├── AI 分析 (llm_analyzer.py)
-  ├── 信息差检测 (information_gap_detector.py)
-  ├── 技术分析 (technical_analysis.py)
-  └── Telegram Bot (main.py)
+### 核心技术栈
+- **LLM**: DeepSeek (主分析)、Qwen (股票联想)、Gemini (审阅)
+- **数据源**: SerpApi (国际新闻)、yfinance (行情)
+- **数据库**: SQLite (WAL模式 + 索引优化)
+- **缓存**: Redis (新闻去重)
+- **框架**: Python Telegram Bot、APScheduler
 
-dashboard:             # 可视化 (600-800MB)
-  └── Streamlit 仪表板 (dashboard.py)
-
-redis:                 # 缓存 (150-300MB)
-  └── 新闻去重 + 会话缓存
+### 关键文件结构
 ```
-
-### 核心文件说明
-```
-src/
-├── main.py                    # 主入口，调度 + Telegram Bot
-├── llm_analyzer.py            # AI 引擎，多模型交叉验证
-├── news_collector.py          # 新闻收集（RSS + newspaper3k）
-├── information_gap_detector.py # 信息差检测（SerpApi + Qwen翻译）
-├── technical_analysis.py      # 技术指标（RSI, MACD, 布林带）
-├── database.py                # SQLite 信号存储
-├── rag_memory.py              # ChromaDB 历史记忆
-├── futures_watcher.py         # 期货监控（铁矿石）
-├── chart_generator.py         # K线图生成
-└── dashboard.py               # Streamlit 仪表板
+investment-analyzer/
+├── src/
+│   ├── main.py                  # Telegram Bot主程序
+│   ├── llm_analyzer.py          # LLM分析引擎
+│   ├── news_collector.py        # 新闻采集
+│   ├── information_gap_detector.py  # 信息差检测
+│   ├── technical_analysis.py    # 技术分析
+│   ├── backtest.py             # 轻量级回测系统
+│   └── database.py             # 数据库管理
+├── initial_keywords.json        # A股核心关键词库 ⭐ (2026-01-04新增)
+├── config.yaml                  # 配置文件（不提交到Git）
+├── .env                         # 环境变量（不提交到Git）
+├── docker-compose.yml
+├── PROJECT_CONTEXT.md           # 本文件
+└── README.md                    # GitHub说明文档
 ```
 
 ---
 
-## 🖥️ VPS 配置
+## 🎯 核心功能详解
 
-### 硬件信息
+### 1. 关键词系统 ⭐ (2026-01-04 新增)
+
+**问题根源**: "系统的盈利能力取决于信息质量，信息质量取决于关键词。但没有初始关键词，怎么抓取新闻？"
+
+**解决方案**:
+- **初始关键词库**: 80个精选A股关键词
+- **一键导入**: `/import_keywords` 命令
+- **AI自动学习**: 分析新闻时自动提取并绑定关键词
+
+**关键词分类**:
+- **宏观经济** (15个): 美联储、Fed、加息、降息、CPI、非农数据、失业率等
+- **科技/半导体** (20个): AI芯片、半导体、光刻机、HBM、中芯国际、北方华创等
+- **新能源** (20个): 新能源汽车、锂电池、光伏、储能、比亚迪、宁德时代等
+- **A股特色** (25个): 白酒、军工、医药、银行、券商、房地产、猪周期等
+
+**使用方法**:
+```bash
+# Telegram Bot中
+/import_keywords  # 导入80个核心关键词
+/bind 关键词 股票代码  # 手动绑定
+/list  # 查看所有关键词
+/autobind_on  # 启用AI自动绑定
+/autobind_off  # 禁用AI自动绑定
 ```
-位置:     Los Angeles, USA
-CPU:      2 vCPU
-RAM:      2.5 GB + 2 GB Swap ✅
-存储:     45 GB Pure SSD
-流量:     3000 GB/月
+
+**配置保存**: `/app/data/user_config.json`
+
+### 2. 轻量级回测系统
+
+**设计目标**: VPS资源友好 (+100-200MB)
+
+**4种策略**:
+- `hold_3_days`: 持有3天
+- `hold_5_days`: 持有5天
+- `stop_loss_5`: 5%止损
+- `target_profit_10`: 10%止盈
+
+**快捷命令**:
+- `/backtest_7d` - 回测7天
+- `/backtest_30d` - 回测30天
+- `/backtest_90d` - 回测90天
+- `/backtest [天数] [策略]` - 自定义回测
+
+**性能优化**:
+- 批处理: 20个信号/批次
+- 异步网络请求
+- ThreadPoolExecutor并发
+
+### 3. AI多智能体辩论
+
+**Buffett vs Munger 模式**:
+- **Bull Agent**: 多方观点（寻找机会）
+- **Bear Agent**: 空方观点（提示风险）
+- **Judge Agent**: 综合判断（最终决策）
+
+**输出字段**:
+```json
+{
+  "stock_market_influence": "positive/negative/neutral",
+  "confidence": 0.0-1.0,
+  "summary": "一句话总结",
+  "reason": "综合逻辑",
+  "concept": "核心概念",
+  "bull_point": "多方理由",
+  "bear_point": "空方理由",
+  "related_tickers": ["股票代码"],
+  "stock_data": [...]
+}
 ```
 
-### 网络优势
-- ✅ 访问 yfinance 稳定（延迟 < 50ms）
-- ✅ 访问国际 API 畅通无阻
-- ✅ 不需要翻墙
+**阈值机制**:
+- 持仓股票: 0.7（更敏感）
+- 非持仓: 0.8
 
-### 性能评估
-- CPU: ✅ 够用（主要是 IO 密集型）
-- 内存: ✅ 已优化（Swap 避免了 OOM）
-- 存储: ✅ 充足（项目 < 10GB）
+### 4. 信息差检测
+
+**原理**: 使用SerpApi检查新闻是否在国内有报道
+
+**判断逻辑**:
+- 无中文报道 → 信息差大 → 高优先级
+- 有中文报道 → 信息差小 → 低优先级
 
 ---
 
-## ⚙️ 已优化的配置
+## 🔧 重要配置
 
-### 调度频率
-```python
-# 巡逻频率: 45 分钟/次 (已从 20 分钟优化)
-# 成本节省: ~30%
+### Telegram Bot命令列表
+```
+📖 **使用帮助**
+/start          - 📖 使用说明书
+
+👮 **巡逻功能**
+/analyze        - 👮 手动巡逻
+
+📊 **回测系统**
+/backtest       - 🔬 自定义回测
+/backtest_7d    - 📊 回测7天
+/backtest_30d   - 📊 回测30天
+/backtest_90d   - 📊 回测90天
+
+🏥 **系统管理**
+/status         - 🏥 系统状态
+/dashboard      - 🖥️ 量化指挥室
+
+🎮 **持仓管理**
+/add 代码       - ➕ 添加持仓
+/del 代码       - ➖ 删除持仓
+/clear          - 🗑️ 清空持仓
+/list           - 📋 配置列表
+
+🤖 **AI智能功能**
+/autobind_on    - ✅ 启用AI自动绑定
+/autobind_off   - ❌ 禁用AI自动绑定
+
+📦 **关键词管理** ⭐
+/import_keywords - 📦 导入A股关键词库
+/bind           - 🔗 绑定关键词
+
+🧠 **AI对话**
+/deepseek 问题   - 🧠 问DeepSeek
+/gemini 问题     - ⚖️ 问Gemini
+/qwen 问题      - 💭 问Qwen
 ```
 
-### 容器配置
-```yaml
-Dashboard:  restart: unless-stopped (保持开启，内存占用不高)
-Network:    host 模式（洛杉矶 VPS 访问美 API 优化）
-时区:       Asia/Shanghai
+### VPS部署命令
+```bash
+# 进入项目目录
+cd ~/investment-analyzer
+
+# 拉取最新代码
+git pull origin main
+
+# 重启服务（注意：使用 docker compose 不是 docker-compose）
+docker compose down
+docker compose up -d
+
+# 查看日志
+docker compose logs -f investment-analyzer
 ```
 
-### 成本估算（每月）
-```
-VPS:        $15-25 (¥100-180)     RackNerd
-DeepSeek:   ¥15-20                 (45min频率)
-Qwen:       ¥15-20
-Gemini:     ¥5-10
-SerpApi:    ¥15-20
-─────────────────────────────────
-总计:       ¥150-250/月
+### Git工作流程
+```bash
+# 1. 查看状态
+git status
+
+# 2. 添加文件
+git add .
+
+# 3. 提交（使用HEREDOC格式）
+git commit -m "$(cat <<'EOF'
+feat: 简短描述
+
+详细说明...
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>
+EOF
+)"
+
+# 4. 推送
+git push origin main
 ```
 
 ---
@@ -123,7 +239,7 @@ SerpApi:    ¥15-20
 
 ### 必需的 API Keys
 ```bash
-# .env 文件（权限 600）
+# .env 文件（权限 600，绝不能删除！）
 TELEGRAM_BOT_TOKEN=xxxxx
 TELEGRAM_CHAT_ID=xxxxx
 DEEPSEEK_API_KEY=xxxxx
@@ -131,6 +247,7 @@ QWEN_API_KEY=xxxxx
 GEMINI_API_KEY=key1,key2,key3  # 支持多 key 轮询
 SERPAPI_KEY=xxxxx              # 信息差检测（可选）
 DASHBOARD_PASSWORD=xxxxx       # 默认 123456
+REDIS_HOST=127.0.0.1
 ```
 
 ### API 用途
@@ -141,27 +258,78 @@ DASHBOARD_PASSWORD=xxxxx       # 默认 123456
 
 ---
 
-## 🎯 当前调试状态
+## 📊 当前数据状态
 
-### ✅ 已完成
-- [x] 基础功能开发完成
-- [x] Docker 部署成功
-- [x] 2GB Swap 添加
-- [x] 巡逻频率优化为 45 分钟
-- [x] Dashboard 正常运行
-- [x] Telegram Bot 推送正常
+### 关键词库状态 ⭐
+- **总数**: 80个核心关键词
+- **来源**: initial_keywords.json
+- **功能状态**: ✅ 已部署，待测试
+- **首次导入**: 待用户执行 `/import_keywords`
 
-### 🟡 调试中
-- [ ] 信号质量验证（观察期第 1-2 周）
-- [ ] API 成本控制
-- [ ] 信息差检测准确率
-- [ ] 技术指标计算准确性
+### 用户持仓
+- **当前**: 空白（用户主要战场在A股）
+- **推荐代码**: 600519(茅台)、300750(宁德时代)、002594(比亚迪)等
 
-### 📅 待办事项
-- [ ] 添加回测系统（验证历史信号）
-- [ ] 优化 Prompt（提高 AI 准确率）
-- [ ] 添加风控模块（止损、仓位管理）
-- [ ] 部署监控告警（Server酱）
+### 定时任务
+- **新闻巡逻**: 每45分钟
+- **期货播报**: 每天09:15
+
+### 容器状态
+- **investment-analyzer**: ✅ 运行中
+- **investment-dashboard**: ✅ 运行中
+- **investment-redis**: ✅ 运行中
+
+---
+
+## ⚠️ 重要注意事项（从错误中学习）
+
+### 🔴 安全问题（深刻教训）
+
+1. **.env文件绝不能删除**
+   - 包含所有API密钥
+   - 删除后果：系统完全瘫痪
+   - 历史教训：差点因清理脚本删除
+
+2. **代码必须先确认再推送**
+   - 用户要求："改完代码问一下我觉得没问题再push到github"
+   - 工作流程：展示代码 → 用户确认 → 推送 → 部署
+
+3. **清理脚本要安全**
+   - 必须先检查关键文件存在（.env、docker-compose.yml）
+   - 不能用通配符删除（如 `rm -f *.md`）
+   - 只删除明确指定的文件
+
+### 🟡 Git配置教训
+
+1. **不要用 `git reset --hard` 盲目重置**
+   - 会丢失本地修改
+   - 应该先备份重要文件
+
+2. **GitHub Token认证**
+   - 解决403错误
+   - 配置 `git remote set-url origin`
+
+3. **VPS IP地址**: `***REMOVED***`
+   - 不是 `***REMOVED***`（历史错误）
+   - 不是 `emergency-fix.bat` 中的地址
+
+### 🟢 A股市场适配
+
+1. **股票代码格式**:
+   - 6开头 → 上海: `.SS` (600519.SS)
+   - 0/3开头 → 深圳: `.SZ` (300750.SZ)
+
+2. **主要市场**: A股，不是美股
+   - 之前示例都是TSLA、AAPL、NVDA
+   - 已全部改为A股代码
+
+3. **特色板块**: 白酒、军工、医药、金融
+
+### 🔵 VPS资源限制
+
+1. **总内存**: 2.5GB RAM + 2GB Swap
+2. **回测策略**: 必须用轻量级版本
+3. **Docker命令**: 使用 `docker compose` 不是 `docker-compose`
 
 ---
 
@@ -169,8 +337,8 @@ DASHBOARD_PASSWORD=xxxxx       # 默认 123456
 
 ### SSH 登录 VPS
 ```bash
-ssh root@your-vps-ip
-cd /path/to/investment-analyzer
+ssh root@***REMOVED***
+cd ~/investment-analyzer
 ```
 
 ### 查看日志
@@ -183,6 +351,9 @@ docker logs -f investment-dashboard
 
 # 最近错误
 docker logs investment-analyzer | grep -i "error" | tail -20
+
+# 查看最近30行
+docker logs --tail 30 investment-analyzer
 ```
 
 ### 容器管理
@@ -210,100 +381,85 @@ SELECT signal, COUNT(*) FROM ai_signals GROUP BY signal;
 .quit
 ```
 
-### 测试功能
-```bash
-# 测试 yfinance
-docker exec -it investment-analyzer python -c "import yfinance as yf; print(yf.Ticker('AAPL').history(period='1d').tail())"
+---
 
-# 测试 Redis
-docker exec -it investment-analyzer python -c "import redis; r = redis.Redis(host='redis', port=6379); print(r.ping())"
-```
+## 🔄 近期更新历史
+
+### 2026-01-04: 关键词系统 ⭐
+- ✅ 创建80个精选A股关键词库 (`initial_keywords.json`)
+- ✅ 实现 `/import_keywords` 一键导入命令
+- ✅ AI自动绑定功能（默认启用）
+- ✅ 推送并部署到VPS (commit: 7a1e511)
+- ✅ 更新Bot菜单和帮助文档
+- ✅ 纠正VPS地址为 ***REMOVED***
+
+### 2025-xx-xx: 轻量级回测
+- ✅ 4种回测策略
+- ✅ 批处理优化（+100-200MB）
+- ✅ 快捷命令（7d/30d/90d）
+
+### 2025-xx-xx: A股适配
+- ✅ 所有示例改为A股
+- ✅ 股票代码格式适配
+- ✅ 添加A股特色板块
 
 ---
 
-## ⚠️ 注意事项
+## 📝 待办事项
 
-### 安全相关
-1. ⚠️ `.env` 文件权限必须是 `600`（已设置）
-2. ⚠️ 不要将 `.env` 提交到 Git（已加 .gitignore）
-3. ⚠️ Dashboard 密码已修改（默认 123456）
-4. ⚠️ API Key 泄露会损失惨重，定期轮换
+### 短期（本周）
+- [ ] 测试 `/import_keywords` 命令
+- [ ] 验证关键词抓取效果
+- [ ] 监控AI自动学习情况
+- [ ] 观察信号质量
 
-### 性能相关
-1. ⚠️ 内存紧张（2.5GB + 2GB Swap），监控 Swap 使用率
-2. ⚠️ SQLite 单机够用，并发性能差（后续可改 PostgreSQL）
-3. ⚠️ 日志文件会增长，定期清理 `/app/logs/`
+### 中期（本月）
+- [ ] 根据使用反馈优化关键词库
+- [ ] 调整回测策略参数
+- [ ] 优化技术指标算法
+- [ ] 评估信号质量
 
-### 成本相关
-1. ⚠️ API 调用成本 ~¥150-250/月，设置预算告警
-2. ⚠️ SerpApi 贡献 ~20% 成本，如不需要可禁用
-3. ⚠️ 频率越低成本越低，但时效性变差
-
----
-
-## 📊 策略评估计划
-
-### 阶段一：观察期（第 1-2 周）
-- **目标**: 不实盘，只记录信号
-- **评估**:
-  - AI 分析是否合理？
-  - 推送时机是否准确？
-  - 信息差检测有效吗？
-- **决策点**: 信号质量 > 70% 继续，否则优化 Prompt
-
-### 阶段二：轻仓测试（第 3-4 周）
-- **目标**: 小额实盘（< ¥5000）
-- **风控**:
-  - 单笔 < 10% 仓位
-  - 严格止损 -5%
-  - 盈亏比 > 2:1
-- **决策点**: 盈利继续，亏损止损
-
-### 阶段三：长期决策（第 2 个月）
-- **计算指标**:
-  - 胜率 = 盈利笔数 / 总笔数
-  - 盈亏比 = 平均盈利 / 平均亏损
-  - 最大回撤 = (最高点 - 最低点) / 最高点
-- **判断标准**:
-  - 胜率 > 45% 且盈亏比 > 1.5 → 继续
-  - 月收益 > 5% → 加仓
-  - 月收益 < 0% → 及时止损
+### 长期（未来）
+- [ ] 添加更多数据源
+- [ ] 实现组合回测
+- [ ] 开发风险管理模块
+- [ ] 优化Prompt提高准确率
 
 ---
 
-## 💡 下次对话快速开始
+## 🔗 快速恢复上下文
 
-### 给 Claude 的提示词模板
-```
-你好！我在调试一个量化项目，请先阅读 PROJECT_CONTEXT.md 了解背景。
+**下次对话时说**:
+> "继续 investment-analyzer 项目"
 
-我的问题是：[填写你的问题]
+**我会做的**:
+1. 读取 `PROJECT_CONTEXT.md` (本文件)
+2. 读取 `src/main.py` 了解最新功能
+3. 读取 `initial_keywords.json` 了解关键词库
+4. 检查 Git log 查看最近提交
 
-当前状态：
-- VPS 在洛杉矶，已加 2GB Swap
-- 巡逻频率 45 分钟
-- Dashboard 正常运行
-- [描述你遇到的问题或想优化的点]
-```
-
-### 推荐的工作流
-1. 每次有重大更新，修改 `PROJECT_CONTEXT.md` 的"最后更新"和"当前调试状态"
-2. 遇到问题时，先说"看 PROJECT_CONTEXT.md，帮我..."
-3. 每周记录一次策略表现（胜率、盈亏比、最大回撤）
-4. 每月评估一次是否继续运行
+**然后我会**: 快速了解项目状态并继续工作。
 
 ---
 
-## 📞 项目背景故事
+## 💡 项目背景故事
 
-> 我是编程小白，在 Gemini 的帮助下完成了这个项目。
-> 从零基础学会 Python、Docker、异步编程，历时约 2 个月。
-> 现在在调试阶段，希望能通过 AI 辅助提升投资决策质量。
+> 我是编程小白，在AI助手的帮助下完成了这个项目。
+> 从零基础学会Python、Docker、异步编程，历时约2个月。
 >
-> 如果你在用这个项目，欢迎交流！
-> —— 2026-01-02
+> **核心理念**: 系统的盈利能力取决于信息质量，信息质量取决于关键词。
+> **关键突破**: 2026-01-04 实现80个A股核心关键词库，解决"无关键词无法抓新闻"的根本问题。
+>
+> 现在在调试阶段，希望能通过AI辅助提升投资决策质量。
+>
+> —— 2026-01-04
 
 ---
 
 **文件路径**: `C:\Users\Jing\Desktop\CC\investment-analyzer\PROJECT_CONTEXT.md`
-**记得**: 每次有重要变化都更新这个文件！
+**重要提醒**: 每次有重大更新后都更新此文件！
+
+**记住**:
+- VPS地址: ***REMOVED***
+- Docker命令: `docker compose` (不是 docker-compose)
+- 工作流程: 改代码 → 问用户 → 推送 → 部署

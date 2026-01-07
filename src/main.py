@@ -444,7 +444,7 @@ class AdvancedInvestmentAnalyzer:
                 url = "https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation"
                 headers = {"Authorization": f"Bearer {qwen_key}", "Content-Type": "application/json"}
                 payload = {
-                    "model": "qwen-max",
+                    "model": "qwen-plus",
                     "input": {"messages": [{"role": "user", "content": "hi"}]},
                     "parameters": {"max_tokens": 5}
                 }

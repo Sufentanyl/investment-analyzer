@@ -46,7 +46,7 @@ async def check_qwen_usage(api_key):
             "Content-Type": "application/json"
         }
         payload = {
-            "model": "qwen-max",
+            "model": "qwen-plus",
             "input": {
                 "messages": [{"role": "user", "content": "hi"}]
             },
