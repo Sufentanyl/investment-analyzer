@@ -103,6 +103,8 @@ Telegram推送: 高价值信号实时通知
 - 📈 技术指标分析
 - 💎 信息差确认
 - 🎯 置信度评分
+- 🧭 套利模板标签（传导路径/对冲腿/失效条件）
+- 🔔 告警等级与命中关键词
 - 📊 K线图快照（可选）
 
 **交互命令**：
@@ -110,10 +112,14 @@ Telegram推送: 高价值信号实时通知
 - `/status` - 查看系统状态
 - `/api` - 查看API使用情况（Gemini/Qwen/DeepSeek状态）🆕
 - `/add <股票代码>` - 添加持仓（降低信号阈值）
-- `/remove <股票代码>` - 移除持仓
-- `/list` - 查看当前持仓
+- `/del <股票代码>` - 移除持仓
+- `/clear` - 清空持仓
+- `/list` - 查看当前配置
 - `/bind <关键词> <股票代码>` - 绑定概念关联（支持多个关键词/股票）🆕
-- `/chat <模型> <消息>` - 与AI对话
+- `/alert_levels <strong,normal,info>` - 设置推送等级过滤 🆕
+- `/deepseek <问题>` - 与DeepSeek对话
+- `/gemini <问题>` - 与Gemini对话
+- `/qwen <问题>` - 与Qwen对话
 - `/backtest <天数> <策略>` - 运行回测（如：`/backtest 30 hold_3_days`）🆕
 
 ---
@@ -160,6 +166,7 @@ src/
 ├── information_gap_detector.py # 信息差检测（SerpApi + Qwen翻译）
 ├── technical_analysis.py      # 技术指标（RSI, MACD, 布林带）
 ├── database.py                # SQLite信号存储
+├── event_templates.py         # 套利模板、行业映射、告警关键词
 ├── rag_memory.py              # ChromaDB历史记忆
 ├── futures_watcher.py         # 期货监控（铁矿石等）
 ├── chart_generator.py         # K线图生成
