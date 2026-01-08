@@ -180,6 +180,32 @@ def load_backtest_results():
         st.error(f"❌ 回测数据读取失败: {e}")
         return pd.DataFrame()
 
+def load_event_memos(limit: int = 200) -> pd.DataFrame:
+    """读取事件备忘录"""
+    db_path = get_db_path()
+    if not db_path:
+        return pd.DataFrame()
+
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='event_memos';")
+        if not cursor.fetchone():
+            conn.close()
+            return pd.DataFrame()
+
+        query = f"SELECT * FROM event_memos ORDER BY created_at DESC LIMIT {limit}"
+        df = pd.read_sql_query(query, conn)
+        conn.close()
+
+        if not df.empty:
+            df['created_at'] = pd.to_datetime(df['created_at'])
+
+        return df
+    except Exception as e:
+        st.error(f"❌ 事件备忘录读取失败: {e}")
+        return pd.DataFrame()
+
 def extract_win_rate(text):
     """从文本中提取胜率数值 (例如 '胜率65%' -> 65)"""
     if not isinstance(text, str): return 0
@@ -250,7 +276,13 @@ def show_main_dashboard():
     st.divider()
 
     # 3. 核心功能区
-    tab1, tab2, tab3, tab4 = st.tabs(["📈 我的持仓", "🚀 核心情报流", "📊 深度数据分析", "🔬 回测结果"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "📈 我的持仓",
+        "🚀 核心情报流",
+        "📊 深度数据分析",
+        "🔬 回测结果",
+        "🧾 事件备忘录",
+    ])
 
     # ================= 📈 我的持仓 (新增) =================
     with tab1:
@@ -530,6 +562,66 @@ def show_main_dashboard():
                     use_container_width=True,
                     hide_index=True
                 )
+
+    with tab5:
+        st.subheader("🧾 事件备忘录")
+        memo_df = load_event_memos()
+
+        if memo_df.empty:
+            st.info("📭 暂无事件备忘录，请等待 AI 巡逻生成事件模板")
+        else:
+            filter_col1, filter_col2, filter_col3 = st.columns(3)
+            with filter_col1:
+                alert_filter = st.multiselect(
+                    "推送等级",
+                    options=["strong", "normal", "info"],
+                    default=["strong", "normal", "info"],
+                )
+            with filter_col2:
+                template_filter = st.multiselect(
+                    "模板筛选",
+                    options=sorted(memo_df['template_label'].dropna().unique().tolist()),
+                )
+            with filter_col3:
+                sector_filter = st.multiselect(
+                    "方向筛选",
+                    options=sorted(memo_df['sectors'].dropna().unique().tolist()),
+                )
+
+            filtered_df = memo_df
+            if alert_filter:
+                filtered_df = filtered_df[filtered_df['alert_level'].isin(alert_filter)]
+            if template_filter:
+                filtered_df = filtered_df[filtered_df['template_label'].isin(template_filter)]
+            if sector_filter:
+                filtered_df = filtered_df[filtered_df['sectors'].isin(sector_filter)]
+
+            st.caption(f"共 {len(filtered_df)} 条事件备忘录")
+
+            for _, row in filtered_df.iterrows():
+                timestamp = row['created_at'].strftime('%m-%d %H:%M') if not pd.isna(row['created_at']) else "--"
+                alert_level = row.get('alert_level') or "info"
+                title = row.get('news_title') or "未命名事件"
+                template_label = row.get('template_label') or "未匹配模板"
+                sectors = row.get('sectors') or "未分类"
+
+                header = f"[{alert_level.upper()}] {title} ({timestamp})"
+                with st.expander(header):
+                    st.markdown(f"**模板**: {template_label}")
+                    st.markdown(f"**方向**: {sectors}")
+                    st.markdown(f"**传导路径**: {row.get('transmission_path') or '待确认'}")
+                    st.markdown("**五行事件模板**")
+                    st.write(
+                        "\n".join([
+                            f"1) 事件原文: {row.get('news_title') or '待确认'}",
+                            f"2) 先反应市场: {row.get('market_first_reaction') or '待确认'}",
+                            f"3) A股映射池: {row.get('a_share_mapping') or '待确认'}",
+                            f"4) 对冲腿: {row.get('hedge_leg') or '仅A股交易'}",
+                            f"5) 失效条件: {row.get('failure_conditions') or '待确认'}",
+                        ])
+                    )
+                    st.markdown(f"**二次验证**: {row.get('verification') or '量价匹配/板块扩散/关键数据节点'}")
+                    st.markdown(f"**命中关键词**: {row.get('alert_keywords') or '未命中'}")
 
 # ================= 4. 入口函数 =================
 def main():
