@@ -610,6 +610,13 @@ def show_main_dashboard():
                     filtered_df = filtered_df[searchable]
 
             st.caption(f"共 {len(filtered_df)} 条事件备忘录")
+            if not filtered_df.empty:
+                st.download_button(
+                    label="📥 下载筛选结果 CSV",
+                    data=filtered_df.to_csv(index=False).encode('utf-8'),
+                    file_name="event_memos.csv",
+                    mime="text/csv",
+                )
 
             for _, row in filtered_df.iterrows():
                 timestamp = row['created_at'].strftime('%m-%d %H:%M') if not pd.isna(row['created_at']) else "--"
