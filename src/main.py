@@ -142,6 +142,12 @@ class AdvancedInvestmentAnalyzer:
                 res = await self.llm_analyzer.analyze_cross_validate(news['title'], news.get('content', ''))
                 if not res: continue
 
+                allowed_levels = set(self.llm_analyzer.config.get('alert_levels_to_push', ['strong', 'normal']))
+                alert_level = res.get('event_memo', {}).get('alert_level', 'info')
+                if alert_level not in allowed_levels:
+                    logger.info(f"🧹 过滤低优先级: {alert_level} | {news['title']}")
+                    continue
+
                 confidence = res.get('confidence', 0)
                 influence = res.get('stock_market_influence', 'neutral')
                 

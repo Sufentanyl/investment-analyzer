@@ -112,7 +112,8 @@ class LLMAnalyzer:
             "my_positions": [],
             "concept_db": {},
             "agents": {},
-            "auto_bind_keywords": True  # 默认启用AI自动绑定关键词
+            "auto_bind_keywords": True,  # 默认启用AI自动绑定关键词
+            "alert_levels_to_push": ["strong", "normal"]  # 默认过滤 info
         }
         if os.path.exists(self.config_path):
             try:
