@@ -2,6 +2,7 @@ from rag_memory import RAGMemory
 from technical_analysis import TechnicalAnalyzer
 from database import DatabaseManager
 from chart_generator import generate_snapshot
+from event_templates import match_event_template, match_sectors, classify_alert_keywords
 import json
 import logging
 import os
@@ -191,7 +192,8 @@ class LLMAnalyzer:
         """Buffett vs Munger 辩论模式"""
         agents = self.config.get('agents', {})
         if not agents or 'bull_agent' not in agents:
-            return await self._analyze_legacy(title, content)
+            result = await self._analyze_legacy(title, content)
+            return self._attach_event_context(title, content, result)
 
         logger.info(f"🎭 启动多智能体辩论: {title}")
         
@@ -257,12 +259,58 @@ class LLMAnalyzer:
                 except Exception as e:
                     logger.error(f"保存信号失败: {e}")
 
-        return final_decision
+        return self._attach_event_context(title, content, final_decision)
 
     async def _analyze_legacy(self, title, content):
         if not self.client_ds: return {}
         prompt = self._build_deep_logic_prompt(title, content)
         return await self._call_llm_json_async(self.client_ds, self.deepseek_model, prompt, "DeepSeek")
+
+    def _attach_event_context(self, title: str, content: str, result: Dict[str, Any]) -> Dict[str, Any]:
+        if not result:
+            return result
+
+        text = f"{title}\n{content}"
+        template = match_event_template(text) or {
+            "label": "未匹配模板",
+            "fastest_source": "待人工确认",
+            "transmission_path": "待人工确认",
+            "hedge_leg": "仅A股交易，暂不对冲",
+            "failure_conditions": "待人工确认",
+        }
+
+        sector_profiles = match_sectors(text)
+        sector_names = [p["name"] for p in sector_profiles] or ["未分类"]
+        mapping_layers = []
+        verification_points = []
+        for profile in sector_profiles:
+            mapping_layers.extend(profile["mapping"])
+            verification_points.extend(profile["verification"])
+
+        alert_info = classify_alert_keywords(text)
+        alert_level = alert_info["level"]
+        alert_keywords = alert_info["keywords"]
+
+        if not mapping_layers:
+            mapping_layers = ["直接受益/受损", "间接受益/受损", "主题扩散"]
+        if not verification_points:
+            verification_points = ["量价匹配", "板块扩散度", "关键数据节点"]
+
+        result["event_template"] = template
+        result["sector_profiles"] = sector_profiles
+        result["event_memo"] = {
+            "event_original": title,
+            "market_first_reaction": template["fastest_source"],
+            "transmission_path": template["transmission_path"],
+            "a_share_mapping": " / ".join(mapping_layers),
+            "hedge_leg": template["hedge_leg"],
+            "failure_conditions": template["failure_conditions"],
+            "verification": "；".join(verification_points),
+            "sectors": "、".join(sector_names),
+            "alert_level": alert_level,
+            "alert_keywords": "、".join(alert_keywords),
+        }
+        return result
 
     async def generate_gemini_review(self, news_title: str, bot_result: Dict) -> str:
         bull_point = bot_result.get('bull_point', '')
@@ -272,13 +320,18 @@ class LLMAnalyzer:
             for s in bot_result['stock_data']:
                 stocks_context += f"股票：{s['name']} ({s['code']}) | 现价：{s['price']} | 技术：{s.get('tech')}\n"
 
+        event_memo = bot_result.get("event_memo", {})
+        template_label = bot_result.get("event_template", {}).get("label", "未匹配模板")
         prompt = f"""
 你是一名投资顾问。请根据以下“大师辩论”结果，写一份幽默总结。
 【新闻】{news_title}
+【模板】{template_label}
+【传导路径】{event_memo.get('transmission_path', '待确认')}
 【多头】{bull_point}
 【空头】{bear_point}
 【结论】{bot_result.get('reason')}
 【盘面】{stocks_context}
+【二次验证】{event_memo.get('verification', '量价匹配/板块扩散/关键数据节点')}
 请输出：1.大师分歧 2.操作建议 3.避坑指南
 """
         return await self._call_gemini_text(prompt)

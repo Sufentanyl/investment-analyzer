@@ -202,6 +202,28 @@ class AdvancedInvestmentAnalyzer:
             elif analysis.get('stock_market_influence') == 'negative': icon = "🔻"
             
             concept_str = analysis.get('concept', '热点事件')
+            event_memo = analysis.get('event_memo', {})
+            template_info = analysis.get('event_template', {})
+
+            memo_lines = []
+            if event_memo:
+                memo_lines = [
+                    f"1) 事件原文: {event_memo.get('event_original', news['title'])}",
+                    f"2) 先反应市场: {event_memo.get('market_first_reaction', '待确认')}",
+                    f"3) A股映射池: {event_memo.get('a_share_mapping', '待确认')}",
+                    f"4) 对冲腿: {event_memo.get('hedge_leg', '仅A股交易')}",
+                    f"5) 失效条件: {event_memo.get('failure_conditions', '待确认')}",
+                ]
+
+                try:
+                    self.llm_analyzer.db.save_event_memo(
+                        news_title=news['title'],
+                        template_label=template_info.get('label'),
+                        sectors=event_memo.get('sectors'),
+                        memo=event_memo,
+                    )
+                except Exception as e:
+                    logger.warning(f"保存事件模板失败: {e}")
 
             # 🔥 新增：AI自动绑定关键词（可开关）
             if self.llm_analyzer.config.get('auto_bind_keywords', True):  # 默认启用
@@ -215,7 +237,27 @@ class AdvancedInvestmentAnalyzer:
                             self.llm_analyzer.auto_bind_keywords(keywords, stock_code)
 
             # 组装完整文案
-            full_msg = f"{icon} **{news['title']}**\n🔥 **涉及概念**: {concept_str}\n\n{final_report}\n\n⏱️ {datetime.now(pytz.timezone('Asia/Shanghai')).strftime('%H:%M')}"
+            template_label = template_info.get('label')
+            memo_block = "\n".join(memo_lines) if memo_lines else "1) 事件原文: 待确认\n2) 先反应市场: 待确认\n3) A股映射池: 待确认\n4) 对冲腿: 仅A股交易\n5) 失效条件: 待确认"
+            verification_note = event_memo.get('verification')
+            sector_note = event_memo.get('sectors')
+            transmission_path = event_memo.get('transmission_path')
+            alert_level = event_memo.get('alert_level', 'info')
+            alert_keywords = event_memo.get('alert_keywords', '')
+
+            full_msg = (
+                f"{icon} **{news['title']}**\n"
+                f"🔥 **涉及概念**: {concept_str}\n"
+                f"🧭 **模板**: {template_label or '未匹配'}\n"
+                f"🏷️ **方向**: {sector_note or '未分类'}\n\n"
+                f"{final_report}\n\n"
+                f"🛣️ **传导路径**: {transmission_path or '待确认'}\n\n"
+                f"🔔 **推送等级**: {'强弹窗' if alert_level == 'strong' else '普通推送' if alert_level == 'normal' else '信息提示'}\n"
+                f"🧩 **命中关键词**: {alert_keywords or '未命中'}\n\n"
+                f"🧾 **五行事件模板**\n{memo_block}\n\n"
+                f"✅ **二次验证**: {verification_note or '量价匹配/板块扩散/关键数据节点'}\n\n"
+                f"⏱️ {datetime.now(pytz.timezone('Asia/Shanghai')).strftime('%H:%M')}"
+            )
 
             if processing_msg:
                 try:

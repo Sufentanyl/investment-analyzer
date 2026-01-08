@@ -56,10 +56,30 @@ class DatabaseManager:
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 ''')
+
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS event_memos (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        news_title TEXT NOT NULL,
+                        template_label TEXT,
+                        sectors TEXT,
+                        market_first_reaction TEXT,
+                        transmission_path TEXT,
+                        a_share_mapping TEXT,
+                        hedge_leg TEXT,
+                        failure_conditions TEXT,
+                        verification TEXT,
+                        alert_level TEXT,
+                        alert_keywords TEXT,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
                 
                 # 🔥 优化2：添加索引，大幅提升查询速度
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_stock_code ON signals(stock_code);')
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_created_at ON signals(created_at);')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_event_memos_created_at ON event_memos(created_at);')
+                self._ensure_event_memo_columns(cursor)
                 
                 conn.commit()
                 logger.info("✅ 数据库初始化完成 (WAL模式 + 索引)")
@@ -79,6 +99,44 @@ class DatabaseManager:
                 conn.commit()
         except Exception as e:
             logger.error(f"❌ 信号存储失败: {e}")
+
+    def save_event_memo(self, news_title, template_label, sectors, memo):
+        try:
+            with self._get_conn() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    INSERT INTO event_memos
+                    (news_title, template_label, sectors, market_first_reaction, transmission_path,
+                     a_share_mapping, hedge_leg, failure_conditions, verification, alert_level,
+                     alert_keywords)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    news_title,
+                    template_label,
+                    sectors,
+                    memo.get('market_first_reaction'),
+                    memo.get('transmission_path'),
+                    memo.get('a_share_mapping'),
+                    memo.get('hedge_leg'),
+                    memo.get('failure_conditions'),
+                    memo.get('verification'),
+                    memo.get('alert_level'),
+                    memo.get('alert_keywords'),
+                ))
+                conn.commit()
+        except Exception as e:
+            logger.error(f"❌ 事件模板存储失败: {e}")
+
+    def _ensure_event_memo_columns(self, cursor):
+        cursor.execute("PRAGMA table_info(event_memos)")
+        existing_columns = {row[1] for row in cursor.fetchall()}
+        missing_columns = {
+            "alert_level": "TEXT",
+            "alert_keywords": "TEXT",
+        }
+        for column_name, column_type in missing_columns.items():
+            if column_name not in existing_columns:
+                cursor.execute(f"ALTER TABLE event_memos ADD COLUMN {column_name} {column_type}")
 
     def get_signals(self, stock_code, limit=50):
         try:
