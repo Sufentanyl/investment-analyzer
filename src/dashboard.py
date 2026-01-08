@@ -565,7 +565,8 @@ def show_main_dashboard():
 
     with tab5:
         st.subheader("🧾 事件备忘录")
-        memo_df = load_event_memos()
+        load_limit = st.slider("加载条数", min_value=50, max_value=500, value=200, step=50)
+        memo_df = load_event_memos(load_limit)
 
         if memo_df.empty:
             st.info("📭 暂无事件备忘录，请等待 AI 巡逻生成事件模板")
@@ -588,6 +589,8 @@ def show_main_dashboard():
                     options=sorted(memo_df['sectors'].dropna().unique().tolist()),
                 )
 
+            search_text = st.text_input("关键词搜索", placeholder="标题/模板/方向/关键词")
+
             filtered_df = memo_df
             if alert_filter:
                 filtered_df = filtered_df[filtered_df['alert_level'].isin(alert_filter)]
@@ -595,6 +598,16 @@ def show_main_dashboard():
                 filtered_df = filtered_df[filtered_df['template_label'].isin(template_filter)]
             if sector_filter:
                 filtered_df = filtered_df[filtered_df['sectors'].isin(sector_filter)]
+            if search_text:
+                search = search_text.strip()
+                if search:
+                    searchable = (
+                        filtered_df['news_title'].fillna('').str.contains(search, case=False)
+                        | filtered_df['template_label'].fillna('').str.contains(search, case=False)
+                        | filtered_df['sectors'].fillna('').str.contains(search, case=False)
+                        | filtered_df['alert_keywords'].fillna('').str.contains(search, case=False)
+                    )
+                    filtered_df = filtered_df[searchable]
 
             st.caption(f"共 {len(filtered_df)} 条事件备忘录")
 
