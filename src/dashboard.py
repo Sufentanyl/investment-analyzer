@@ -617,6 +617,22 @@ def show_main_dashboard():
                     file_name="event_memos.csv",
                     mime="text/csv",
                 )
+                show_table = st.checkbox("显示表格摘要", value=False)
+                if show_table:
+                    display_cols = [
+                        "created_at",
+                        "news_title",
+                        "template_label",
+                        "sectors",
+                        "alert_level",
+                        "alert_keywords",
+                    ]
+                    available_cols = [col for col in display_cols if col in filtered_df.columns]
+                    st.dataframe(
+                        filtered_df[available_cols],
+                        use_container_width=True,
+                        hide_index=True,
+                    )
 
             for _, row in filtered_df.iterrows():
                 timestamp = row['created_at'].strftime('%m-%d %H:%M') if not pd.isna(row['created_at']) else "--"
