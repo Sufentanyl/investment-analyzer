@@ -180,6 +180,62 @@ def load_backtest_results():
         st.error(f"❌ 回测数据读取失败: {e}")
         return pd.DataFrame()
 
+def load_event_memos(limit: int = 200) -> pd.DataFrame:
+    """读取事件备忘录"""
+    db_path = get_db_path()
+    if not db_path:
+        return pd.DataFrame()
+
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='event_memos';")
+        if not cursor.fetchone():
+            conn.close()
+            return pd.DataFrame()
+
+        query = f"SELECT * FROM event_memos ORDER BY created_at DESC LIMIT {limit}"
+        df = pd.read_sql_query(query, conn)
+        conn.close()
+
+        if not df.empty:
+            df['created_at'] = pd.to_datetime(df['created_at'])
+
+        return df
+    except Exception as e:
+        st.error(f"❌ 事件备忘录读取失败: {e}")
+        return pd.DataFrame()
+
+def update_event_memo_review(memo_id: int, review_status: str, review_notes: str, outcome: str) -> None:
+    db_path = get_db_path()
+    if not db_path:
+        st.error("❌ 未找到数据库文件，无法更新事件备忘录")
+        return
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute(
+            '''
+            UPDATE event_memos
+            SET review_status = ?,
+                review_notes = ?,
+                outcome = ?,
+                updated_at = ?
+            WHERE id = ?
+            ''',
+            (
+                review_status,
+                review_notes,
+                outcome,
+                datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                memo_id,
+            ),
+        )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        st.error(f"❌ 事件备忘录更新失败: {e}")
+
 def extract_win_rate(text):
     """从文本中提取胜率数值 (例如 '胜率65%' -> 65)"""
     if not isinstance(text, str): return 0
@@ -250,7 +306,13 @@ def show_main_dashboard():
     st.divider()
 
     # 3. 核心功能区
-    tab1, tab2, tab3, tab4 = st.tabs(["📈 我的持仓", "🚀 核心情报流", "📊 深度数据分析", "🔬 回测结果"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "📈 我的持仓",
+        "🚀 核心情报流",
+        "📊 深度数据分析",
+        "🔬 回测结果",
+        "🧾 事件备忘录",
+    ])
 
     # ================= 📈 我的持仓 (新增) =================
     with tab1:
@@ -530,6 +592,148 @@ def show_main_dashboard():
                     use_container_width=True,
                     hide_index=True
                 )
+
+    with tab5:
+        st.subheader("🧾 事件备忘录")
+        load_limit = st.slider("加载条数", min_value=50, max_value=500, value=200, step=50)
+        memo_df = load_event_memos(load_limit)
+
+        if memo_df.empty:
+            st.info("📭 暂无事件备忘录，请等待 AI 巡逻生成事件模板")
+        else:
+            filter_col1, filter_col2, filter_col3 = st.columns(3)
+            with filter_col1:
+                alert_filter = st.multiselect(
+                    "推送等级",
+                    options=["strong", "normal", "info"],
+                    default=["strong", "normal", "info"],
+                )
+            with filter_col2:
+                template_filter = st.multiselect(
+                    "模板筛选",
+                    options=sorted(memo_df['template_label'].dropna().unique().tolist()),
+                )
+            with filter_col3:
+                sector_filter = st.multiselect(
+                    "方向筛选",
+                    options=sorted(memo_df['sectors'].dropna().unique().tolist()),
+                )
+
+            date_min = memo_df['created_at'].min().date()
+            date_max = memo_df['created_at'].max().date()
+            date_range = st.date_input(
+                "日期范围",
+                value=(date_min, date_max),
+                min_value=date_min,
+                max_value=date_max,
+            )
+
+            search_text = st.text_input("关键词搜索", placeholder="标题/模板/方向/关键词")
+
+            filtered_df = memo_df
+            if alert_filter:
+                filtered_df = filtered_df[filtered_df['alert_level'].isin(alert_filter)]
+            if template_filter:
+                filtered_df = filtered_df[filtered_df['template_label'].isin(template_filter)]
+            if sector_filter:
+                filtered_df = filtered_df[filtered_df['sectors'].isin(sector_filter)]
+            if isinstance(date_range, (tuple, list)) and len(date_range) == 2:
+                start_date, end_date = date_range
+                filtered_df = filtered_df[
+                    (filtered_df['created_at'].dt.date >= start_date)
+                    & (filtered_df['created_at'].dt.date <= end_date)
+                ]
+            if search_text:
+                search = search_text.strip()
+                if search:
+                    searchable = (
+                        filtered_df['news_title'].fillna('').str.contains(search, case=False)
+                        | filtered_df['template_label'].fillna('').str.contains(search, case=False)
+                        | filtered_df['sectors'].fillna('').str.contains(search, case=False)
+                        | filtered_df['alert_keywords'].fillna('').str.contains(search, case=False)
+                    )
+                    filtered_df = filtered_df[searchable]
+
+            st.caption(f"共 {len(filtered_df)} 条事件备忘录")
+            if not filtered_df.empty:
+                st.download_button(
+                    label="📥 下载筛选结果 CSV",
+                    data=filtered_df.to_csv(index=False).encode('utf-8'),
+                    file_name="event_memos.csv",
+                    mime="text/csv",
+                )
+                show_table = st.checkbox("显示表格摘要", value=False)
+                if show_table:
+                    display_cols = [
+                        "created_at",
+                        "news_title",
+                        "template_label",
+                        "sectors",
+                        "alert_level",
+                        "alert_keywords",
+                    ]
+                    available_cols = [col for col in display_cols if col in filtered_df.columns]
+                    st.dataframe(
+                        filtered_df[available_cols],
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+
+            for _, row in filtered_df.iterrows():
+                timestamp = row['created_at'].strftime('%m-%d %H:%M') if not pd.isna(row['created_at']) else "--"
+                alert_level = row.get('alert_level') or "info"
+                title = row.get('news_title') or "未命名事件"
+                template_label = row.get('template_label') or "未匹配模板"
+                sectors = row.get('sectors') or "未分类"
+                memo_id = row.get('id')
+
+                header = f"[{alert_level.upper()}] {title} ({timestamp})"
+                with st.expander(header):
+                    st.markdown(f"**模板**: {template_label}")
+                    st.markdown(f"**方向**: {sectors}")
+                    st.markdown(f"**传导路径**: {row.get('transmission_path') or '待确认'}")
+                    st.markdown("**五行事件模板**")
+                    st.write(
+                        "\n".join([
+                            f"1) 事件原文: {row.get('news_title') or '待确认'}",
+                            f"2) 先反应市场: {row.get('market_first_reaction') or '待确认'}",
+                            f"3) A股映射池: {row.get('a_share_mapping') or '待确认'}",
+                            f"4) 对冲腿: {row.get('hedge_leg') or '仅A股交易'}",
+                            f"5) 失效条件: {row.get('failure_conditions') or '待确认'}",
+                        ])
+                    )
+                    st.markdown(f"**二次验证**: {row.get('verification') or '量价匹配/板块扩散/关键数据节点'}")
+                    st.markdown(f"**命中关键词**: {row.get('alert_keywords') or '未命中'}")
+
+                    if memo_id is not None:
+                        st.markdown("**复盘记录**")
+                        default_status = row.get('review_status') or "未复盘"
+                        default_notes = row.get('review_notes') or ""
+                        default_outcome = row.get('outcome') or ""
+                        with st.form(key=f"review_form_{memo_id}"):
+                            review_status = st.selectbox(
+                                "复盘状态",
+                                ["未复盘", "验证中", "已验证", "已失效"],
+                                index=["未复盘", "验证中", "已验证", "已失效"].index(default_status)
+                                if default_status in ["未复盘", "验证中", "已验证", "已失效"]
+                                else 0,
+                            )
+                            outcome = st.text_input("结果/结论", value=default_outcome)
+                            review_notes = st.text_area("复盘备注", value=default_notes)
+                            submitted = st.form_submit_button("保存复盘")
+                            if submitted:
+                                update_event_memo_review(memo_id, review_status, review_notes, outcome)
+                                st.success("✅ 复盘已保存")
+
+                    if not df.empty and 'news_title' in df.columns:
+                        related_signals = df[df['news_title'] == title]
+                        if not related_signals.empty:
+                            st.markdown(f"**关联信号数量**: {len(related_signals)}")
+                            st.dataframe(
+                                related_signals[['stock_code', 'signal', 'confidence', 'created_at']].head(10),
+                                use_container_width=True,
+                                hide_index=True,
+                            )
 
 # ================= 4. 入口函数 =================
 def main():

@@ -103,6 +103,9 @@ Telegram推送: 高价值信号实时通知
 - 📈 技术指标分析
 - 💎 信息差确认
 - 🎯 置信度评分
+- 🧭 套利模板标签（传导路径/对冲腿/失效条件）
+- 🔔 告警等级与命中关键词
+- 🧾 事件备忘录复盘（状态/备注/结论）
 - 📊 K线图快照（可选）
 
 **交互命令**：
@@ -110,10 +113,14 @@ Telegram推送: 高价值信号实时通知
 - `/status` - 查看系统状态
 - `/api` - 查看API使用情况（Gemini/Qwen/DeepSeek状态）🆕
 - `/add <股票代码>` - 添加持仓（降低信号阈值）
-- `/remove <股票代码>` - 移除持仓
-- `/list` - 查看当前持仓
+- `/del <股票代码>` - 移除持仓
+- `/clear` - 清空持仓
+- `/list` - 查看当前配置
 - `/bind <关键词> <股票代码>` - 绑定概念关联（支持多个关键词/股票）🆕
-- `/chat <模型> <消息>` - 与AI对话
+- `/alert_levels <strong,normal,info>` - 设置推送等级过滤 🆕
+- `/deepseek <问题>` - 与DeepSeek对话
+- `/gemini <问题>` - 与Gemini对话
+- `/qwen <问题>` - 与Qwen对话
 - `/backtest <天数> <策略>` - 运行回测（如：`/backtest 30 hold_3_days`）🆕
 
 ---
@@ -160,10 +167,47 @@ src/
 ├── information_gap_detector.py # 信息差检测（SerpApi + Qwen翻译）
 ├── technical_analysis.py      # 技术指标（RSI, MACD, 布林带）
 ├── database.py                # SQLite信号存储
+├── event_templates.py         # 套利模板、行业映射、告警关键词
 ├── rag_memory.py              # ChromaDB历史记忆
 ├── futures_watcher.py         # 期货监控（铁矿石等）
 ├── chart_generator.py         # K线图生成
 └── dashboard.py               # Streamlit仪表板
+```
+
+### 模板/关键词动态配置（可选）
+你可以通过环境变量 `EVENT_TEMPLATES_PATH` 指定 JSON 文件覆盖默认模板与关键词：
+
+```bash
+export EVENT_TEMPLATES_PATH=/app/event_templates.json
+```
+
+JSON 支持以下字段（按需覆盖）：
+```json
+{
+  "event_templates": {
+    "ah_spread": {
+      "label": "A/H 价差收敛（相对价值配对）",
+      "fastest_source": "港股盘中/海外风险偏好/美元利率冲击",
+      "transmission_path": "H股先波动 → A股次日/随后补定价 → 价差收敛或再扩",
+      "hedge_leg": "同公司 A/H 配对（多A空H或多H空A）",
+      "failure_conditions": "难借券/停牌/公司行动不同步/资金单边流动导致中枢迁移"
+    }
+  },
+  "template_keywords": {
+    "ah_spread": ["A/H", "AH溢价"]
+  },
+  "sector_profiles": {
+    "半导体": {
+      "triggers": ["出口管制", "光刻"],
+      "mapping": ["设备/材料", "制造/代工"],
+      "verification": ["链条扩散与成交量同步"]
+    }
+  },
+  "alert_keywords": {
+    "strong": ["立案调查", "停牌"],
+    "normal": ["算力", "光模块"]
+  }
+}
 ```
 
 ---

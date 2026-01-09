@@ -142,6 +142,12 @@ class AdvancedInvestmentAnalyzer:
                 res = await self.llm_analyzer.analyze_cross_validate(news['title'], news.get('content', ''))
                 if not res: continue
 
+                allowed_levels = set(self.llm_analyzer.config.get('alert_levels_to_push', ['strong', 'normal']))
+                alert_level = res.get('event_memo', {}).get('alert_level', 'info')
+                if alert_level not in allowed_levels:
+                    logger.info(f"🧹 过滤低优先级: {alert_level} | {news['title']}")
+                    continue
+
                 confidence = res.get('confidence', 0)
                 influence = res.get('stock_market_influence', 'neutral')
                 
@@ -202,6 +208,28 @@ class AdvancedInvestmentAnalyzer:
             elif analysis.get('stock_market_influence') == 'negative': icon = "🔻"
             
             concept_str = analysis.get('concept', '热点事件')
+            event_memo = analysis.get('event_memo', {})
+            template_info = analysis.get('event_template', {})
+
+            memo_lines = []
+            if event_memo:
+                memo_lines = [
+                    f"1) 事件原文: {event_memo.get('event_original', news['title'])}",
+                    f"2) 先反应市场: {event_memo.get('market_first_reaction', '待确认')}",
+                    f"3) A股映射池: {event_memo.get('a_share_mapping', '待确认')}",
+                    f"4) 对冲腿: {event_memo.get('hedge_leg', '仅A股交易')}",
+                    f"5) 失效条件: {event_memo.get('failure_conditions', '待确认')}",
+                ]
+
+                try:
+                    self.llm_analyzer.db.save_event_memo(
+                        news_title=news['title'],
+                        template_label=template_info.get('label'),
+                        sectors=event_memo.get('sectors'),
+                        memo=event_memo,
+                    )
+                except Exception as e:
+                    logger.warning(f"保存事件模板失败: {e}")
 
             # 🔥 新增：AI自动绑定关键词（可开关）
             if self.llm_analyzer.config.get('auto_bind_keywords', True):  # 默认启用
@@ -215,7 +243,27 @@ class AdvancedInvestmentAnalyzer:
                             self.llm_analyzer.auto_bind_keywords(keywords, stock_code)
 
             # 组装完整文案
-            full_msg = f"{icon} **{news['title']}**\n🔥 **涉及概念**: {concept_str}\n\n{final_report}\n\n⏱️ {datetime.now(pytz.timezone('Asia/Shanghai')).strftime('%H:%M')}"
+            template_label = template_info.get('label')
+            memo_block = "\n".join(memo_lines) if memo_lines else "1) 事件原文: 待确认\n2) 先反应市场: 待确认\n3) A股映射池: 待确认\n4) 对冲腿: 仅A股交易\n5) 失效条件: 待确认"
+            verification_note = event_memo.get('verification')
+            sector_note = event_memo.get('sectors')
+            transmission_path = event_memo.get('transmission_path')
+            alert_level = event_memo.get('alert_level', 'info')
+            alert_keywords = event_memo.get('alert_keywords', '')
+
+            full_msg = (
+                f"{icon} **{news['title']}**\n"
+                f"🔥 **涉及概念**: {concept_str}\n"
+                f"🧭 **模板**: {template_label or '未匹配'}\n"
+                f"🏷️ **方向**: {sector_note or '未分类'}\n\n"
+                f"{final_report}\n\n"
+                f"🛣️ **传导路径**: {transmission_path or '待确认'}\n\n"
+                f"🔔 **推送等级**: {'强弹窗' if alert_level == 'strong' else '普通推送' if alert_level == 'normal' else '信息提示'}\n"
+                f"🧩 **命中关键词**: {alert_keywords or '未命中'}\n\n"
+                f"🧾 **五行事件模板**\n{memo_block}\n\n"
+                f"✅ **二次验证**: {verification_note or '量价匹配/板块扩散/关键数据节点'}\n\n"
+                f"⏱️ {datetime.now(pytz.timezone('Asia/Shanghai')).strftime('%H:%M')}"
+            )
 
             if processing_msg:
                 try:
@@ -524,7 +572,13 @@ async def list_config_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     config = context.bot_data['analyzer'].llm_analyzer.config
     positions = ", ".join(config['my_positions']) if config['my_positions'] else "（空）"
     keywords = ", ".join(list(config['concept_db'].keys())[:10]) if config['concept_db'] else "（空）"
-    msg = f"📋 **当前配置**\n\n🏦 **持仓监控**: {positions}\n\n🔑 **关键词库**: {keywords}"
+    alert_levels = ", ".join(config.get('alert_levels_to_push', ['strong', 'normal']))
+    msg = (
+        f"📋 **当前配置**\n\n"
+        f"🏦 **持仓监控**: {positions}\n\n"
+        f"🔑 **关键词库**: {keywords}\n\n"
+        f"🔔 **推送等级**: {alert_levels}"
+    )
     await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
 
 async def clear_positions_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -639,6 +693,45 @@ async def bind_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyword, code = args[0], args[1]
     analyzer.llm_analyzer.bind_keyword(keyword, code)
     await update.message.reply_text(f"🔗 已绑定: `{keyword}` → `{code}`", parse_mode=ParseMode.MARKDOWN)
+
+async def alert_levels_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """设置或查看推送等级过滤"""
+    analyzer = context.bot_data['analyzer']
+    config = analyzer.llm_analyzer.config
+    valid_levels = {"strong", "normal", "info"}
+
+    if not context.args:
+        current_levels = ", ".join(config.get('alert_levels_to_push', ['strong', 'normal']))
+        await update.message.reply_text(
+            "🔔 **当前推送等级**\n\n"
+            f"{current_levels}\n\n"
+            "💡 用法: `/alert_levels strong,normal` 或 `/alert_levels strong,normal,info`",
+            parse_mode=ParseMode.MARKDOWN,
+        )
+        return
+
+    raw_levels = ",".join(context.args).replace(" ", "")
+    requested_levels = [lvl for lvl in raw_levels.split(',') if lvl]
+    if not requested_levels:
+        await update.message.reply_text("❌ 未识别推送等级，请输入 strong/normal/info", parse_mode=ParseMode.MARKDOWN)
+        return
+
+    invalid_levels = [lvl for lvl in requested_levels if lvl not in valid_levels]
+    if invalid_levels:
+        await update.message.reply_text(
+            "❌ 推送等级无效: " + ", ".join(invalid_levels) + "\n\n"
+            "✅ 可选: strong, normal, info",
+            parse_mode=ParseMode.MARKDOWN,
+        )
+        return
+
+    config['alert_levels_to_push'] = requested_levels
+    analyzer.llm_analyzer.save_config()
+    await update.message.reply_text(
+        "✅ **推送等级已更新**\n\n"
+        f"当前推送: {', '.join(requested_levels)}",
+        parse_mode=ParseMode.MARKDOWN,
+    )
 
 async def import_keywords_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """导入A股核心关键词库"""
@@ -793,6 +886,7 @@ AI会自动学习，将概念关键词关联到股票
 控制命令：
 `/autobind_on` - 启用AI自动绑定
 `/autobind_off` - 禁用AI自动绑定
+`/alert_levels` - 设置推送等级（strong/normal/info）
 
 ━━━━━━━━━━━━━━━
 📊 **回测系统**
@@ -812,6 +906,7 @@ AI会自动学习，将概念关键词关联到股票
 `/del 代码` - 删除持仓
 `/clear` - 清空所有持仓
 `/list` - 查看配置
+`/alert_levels` - 调整推送等级
 
 ━━━━━━━━━━━━━━━
 📦 **关键词管理**
@@ -887,6 +982,7 @@ async def post_init(app):
         BotCommand("autobind_off", "❌ 禁用AI自动绑定"),
         BotCommand("import_keywords", "📦 导入A股关键词库"),
         BotCommand("list", "📋 配置列表"),
+        BotCommand("alert_levels", "🔔 推送等级过滤"),
         BotCommand("bind", "🔗 绑定关键词"),
         BotCommand("deepseek", "🧠 问DeepSeek"),
         BotCommand("gemini", "⚖️ 问Gemini"),
@@ -932,6 +1028,7 @@ def run_bot():
             app.add_handler(CommandHandler('autobind_off', autobind_off_command))
             app.add_handler(CommandHandler('import_keywords', import_keywords_command))
             app.add_handler(CommandHandler('list', list_config_command))
+            app.add_handler(CommandHandler('alert_levels', alert_levels_command))
             app.add_handler(CommandHandler('bind', bind_command))
             app.add_handler(CommandHandler('deepseek', chat_handler_wrapper))
             app.add_handler(CommandHandler('qwen', chat_handler_wrapper))
