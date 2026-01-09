@@ -19,13 +19,77 @@ st.set_page_config(
 # 注入 CSS 样式 (暗黑金融风)
 st.markdown("""
 <style>
-    .big-font { font-size: 24px !important; font-weight: bold; }
-    .win-rate-high { color: #00FF7F; font-weight: bold; }
-    .win-rate-low { color: #FF4500; font-weight: bold; }
-    .stMetric { background-color: #1E1E1E; padding: 10px; border-radius: 5px; }
-    /* 隐藏 Streamlit 默认的菜单和页脚，看起来更像 App */
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&family=Fraunces:wght@600&display=swap');
+
+:root {
+  --bg-1: #0B0F14;
+  --bg-2: #111824;
+  --card: rgba(18, 24, 33, 0.85);
+  --accent: #E7B75F;
+  --accent-2: #5FE7C0;
+  --text: #E9EEF5;
+  --muted: #9AA7B3;
+}
+
+html, body, [class*="css"] {
+  font-family: "Space Grotesk", sans-serif;
+  color: var(--text);
+}
+
+.stApp {
+  background: radial-gradient(1200px 600px at 80% -10%, rgba(95, 231, 192, 0.15), transparent 60%),
+              radial-gradient(900px 500px at 10% 0%, rgba(231, 183, 95, 0.18), transparent 55%),
+              linear-gradient(180deg, var(--bg-2), var(--bg-1));
+}
+
+.hero {
+  background: linear-gradient(135deg, rgba(231,183,95,0.15), rgba(95,231,192,0.08));
+  border: 1px solid rgba(231,183,95,0.25);
+  border-radius: 18px;
+  padding: 20px 24px;
+  margin-bottom: 18px;
+}
+
+.hero-title {
+  font-family: "Fraunces", serif;
+  font-size: 30px;
+  margin: 0 0 6px 0;
+}
+
+.hero-sub {
+  color: var(--muted);
+  margin: 0;
+}
+
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.kpi-card {
+  background: var(--card);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 12px;
+  padding: 14px 16px;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.35);
+}
+
+.kpi-label { color: var(--muted); font-size: 12px; }
+.kpi-value { font-size: 22px; font-weight: 700; }
+
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  background: rgba(255,255,255,0.08);
+}
+
+.stMetric { background-color: transparent; }
+
+#MainMenu {visibility: hidden;}
+footer {visibility: hidden;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -247,10 +311,15 @@ def extract_win_rate(text):
 # ================= 3. 主界面布局 =================
 
 def show_main_dashboard():
-    st.title("📈 ValueCell AI 作战指挥室")
-    st.caption("多智能体辩论 | 历史回测 | 情绪监控")
+    st.markdown("""
+    <div class="hero">
+      <div class="hero-title">ValueCell AI 作战指挥室</div>
+      <p class="hero-sub">多智能体辩论 · 事件簇聚合 · 信息差评分 · 量价验证</p>
+    </div>
+    """, unsafe_allow_html=True)
 
     # 1. 加载数据
+    today = datetime.now(pytz.timezone('Asia/Shanghai')).date()
     df = load_data()
     
     if df.empty:
@@ -306,12 +375,13 @@ def show_main_dashboard():
     st.divider()
 
     # 3. 核心功能区
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "📈 我的持仓",
         "🚀 核心情报流",
         "📊 深度数据分析",
         "🔬 回测结果",
         "🧾 事件备忘录",
+        "🧩 事件簇",
     ])
 
     # ================= 📈 我的持仓 (新增) =================
@@ -448,6 +518,16 @@ def show_main_dashboard():
                         confidence_col = 'confidence' if 'confidence' in row.index else None
                         if confidence_col and confidence_col in row.index:
                             st.metric("AI置信度", f"{row[confidence_col] * 100:.0f}%")
+                        if 'confidence_effective' in row.index and not pd.isna(row.get('confidence_effective')):
+                            st.metric("有效置信度", f"{row['confidence_effective'] * 100:.0f}%")
+
+                        if 'gap_confidence' in row.index and 'validation_score' in row.index:
+                            st.caption(
+                                f"信息差: {row.get('gap_confidence', 0):.2f} | "
+                                f"量价验证: {row.get('validation_score', 0):.2f}"
+                            )
+                        if 'coverage_status' in row.index:
+                            st.caption(f"覆盖状态: {row.get('coverage_status', 'unknown')}")
 
     with tab3:
         # 🔥 修复: 如果df为空，显示提示
@@ -618,6 +698,44 @@ def show_main_dashboard():
                     "方向筛选",
                     options=sorted(memo_df['sectors'].dropna().unique().tolist()),
                 )
+
+    with tab6:
+        st.subheader("🧩 事件簇聚合")
+        if df.empty or 'event_cluster_id' not in df.columns:
+            st.info("📭 暂无事件簇数据，等待 AI 生成或升级后刷新")
+        else:
+            cluster_df = df.dropna(subset=['event_cluster_id']).copy()
+            cluster_df['event_cluster_id'] = cluster_df['event_cluster_id'].astype(int)
+
+            agg = cluster_df.groupby('event_cluster_id').agg({
+                'news_title': 'first',
+                'created_at': 'max',
+                'confidence': 'mean',
+                'confidence_effective': 'mean' if 'confidence_effective' in cluster_df.columns else 'mean',
+                'gap_confidence': 'mean' if 'gap_confidence' in cluster_df.columns else 'mean',
+                'validation_score': 'mean' if 'validation_score' in cluster_df.columns else 'mean',
+                'stock_code': 'count'
+            }).rename(columns={'stock_code': 'signals'}).reset_index()
+
+            agg = agg.sort_values('created_at', ascending=False).head(100)
+
+            for _, row in agg.iterrows():
+                conf_eff = row['confidence_effective'] if not pd.isna(row.get('confidence_effective')) else row['confidence']
+                with st.expander(f"🧩 #{int(row['event_cluster_id'])} | {row['news_title']}"):
+                    c1, c2, c3, c4 = st.columns(4)
+                    with c1:
+                        st.metric("信号数", int(row['signals']))
+                    with c2:
+                        st.metric("均值置信度", f"{row['confidence']:.2f}")
+                    with c3:
+                        st.metric("有效置信度", f"{conf_eff:.2f}")
+                    with c4:
+                        st.metric("最近时间", row['created_at'].strftime('%m-%d %H:%M'))
+
+                    st.caption(
+                        f"信息差均值: {row.get('gap_confidence', 0):.2f} | "
+                        f"量价验证均值: {row.get('validation_score', 0):.2f}"
+                    )
 
             date_min = memo_df['created_at'].min().date()
             date_max = memo_df['created_at'].max().date()

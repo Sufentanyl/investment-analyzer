@@ -6,6 +6,7 @@ import hashlib
 import pytz
 import time
 import aiohttp
+import re
 from telegram import Bot, Update, BotCommand
 from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, ContextTypes, ApplicationBuilder
@@ -91,6 +92,59 @@ class AdvancedInvestmentAnalyzer:
         news_id = f"processed_news:{hashlib.md5(news_url.encode()).hexdigest()}"
         self.redis_client.setex(news_id, 259200, "1")
 
+    def is_cluster_processed(self, cluster_id: int) -> bool:
+        if not self.redis_client or not cluster_id:
+            return False
+        cluster_key = f"processed_cluster:{cluster_id}"
+        return self.redis_client.exists(cluster_key)
+
+    def mark_cluster_as_processed(self, cluster_id: int):
+        if not self.redis_client or not cluster_id:
+            return
+        cooldown_hours = int(os.getenv("CLUSTER_COOLDOWN_HOURS", "6"))
+        cluster_key = f"processed_cluster:{cluster_id}"
+        self.redis_client.setex(cluster_key, cooldown_hours * 3600, "1")
+
+    def _normalize_title(self, title: str) -> str:
+        if not title:
+            return ""
+        text = title.lower()
+        text = re.sub(r"[^a-z0-9\u4e00-\u9fff]+", " ", text)
+        text = re.sub(r"\b(update|breaking|exclusive|analysis)\b", " ", text)
+        text = re.sub(r"\s+", " ", text).strip()
+        return text
+
+    def _build_event_signature(self, title: str) -> str:
+        normalized = self._normalize_title(title)
+        tokens = re.findall(r"[a-z0-9\u4e00-\u9fff]+", normalized)
+        stopwords = {
+            "the", "and", "for", "with", "from", "this", "that", "into", "over", "after",
+            "china", "chinese", "global", "market", "markets", "stocks", "stock", "news",
+            "report", "reports", "say", "says", "saying", "update",
+        }
+        filtered = [t for t in tokens if t not in stopwords and len(t) > 1]
+        key_tokens = filtered[:6]
+        signature_raw = " ".join(key_tokens) if key_tokens else normalized
+        return hashlib.md5(signature_raw.encode()).hexdigest()
+
+    def is_title_processed(self, title: str) -> bool:
+        if not self.redis_client:
+            return False
+        normalized = self._normalize_title(title)
+        if not normalized:
+            return False
+        title_id = f"processed_title:{hashlib.md5(normalized.encode()).hexdigest()}"
+        return self.redis_client.exists(title_id)
+
+    def mark_title_as_processed(self, title: str):
+        if not self.redis_client:
+            return
+        normalized = self._normalize_title(title)
+        if not normalized:
+            return
+        title_id = f"processed_title:{hashlib.md5(normalized.encode()).hexdigest()}"
+        self.redis_client.setex(title_id, 129600, "1")
+
     async def run_analysis(self, update: Update = None, context: ContextTypes.DEFAULT_TYPE = None, is_manual: bool = False):
         try:
             chat_id = update.effective_chat.id if update else self.chat_id
@@ -122,8 +176,18 @@ class AdvancedInvestmentAnalyzer:
                 title = news.get('title', '').strip()
 
                 if self.is_news_processed(url): continue
+                if title and self.is_title_processed(title): continue
                 if url in seen_urls: continue
                 if title and title in seen_titles: continue
+
+                if title:
+                    signature = self._build_event_signature(title)
+                    window_hours = int(os.getenv("CLUSTER_WINDOW_HOURS", "24"))
+                    cluster_id, _ = self.llm_analyzer.db.get_or_create_event_cluster(signature, title, window_hours=window_hours)
+                    news['_event_signature'] = signature
+                    news['_cluster_id'] = cluster_id
+                    if cluster_id and self.is_cluster_processed(cluster_id):
+                        continue
                 
                 new_news_items.append(news)
                 seen_urls.add(url)
@@ -138,6 +202,10 @@ class AdvancedInvestmentAnalyzer:
             potentially_valuable_news = []
             for news in new_news_items:
                 self.mark_news_as_processed(news['url']) 
+                if news.get('title'):
+                    self.mark_title_as_processed(news['title'])
+                if news.get('_cluster_id'):
+                    self.mark_cluster_as_processed(news['_cluster_id'])
                 
                 res = await self.llm_analyzer.analyze_cross_validate(news['title'], news.get('content', ''))
                 if not res: continue
@@ -148,22 +216,12 @@ class AdvancedInvestmentAnalyzer:
                     logger.info(f"🧹 过滤低优先级: {alert_level} | {news['title']}")
                     continue
 
-                confidence = res.get('confidence', 0)
                 influence = res.get('stock_market_influence', 'neutral')
-                
-                # 从配置读取阈值
-                threshold = self.llm_analyzer.threshold_normal
-                if res.get('stock_data'):
-                    for s in res['stock_data']:
-                        if s.get('is_hold'): 
-                            threshold = self.llm_analyzer.threshold_hold
-                            break
-                
-                if confidence >= threshold and influence != 'neutral':
+                if influence != 'neutral':
                     news['_analysis_result'] = res
                     potentially_valuable_news.append(news)
                 else:
-                    logger.info(f"🗑️ AI 过滤: 价值低 ({influence}, {confidence:.2f})")
+                    logger.info(f"🗑️ AI 过滤: 价值低 ({influence})")
 
             if not potentially_valuable_news:
                 if is_manual: await self.telegram_bot.send_message(chat_id=chat_id, text="⚖️ 本轮新闻经 AI 研判无重大影响。")
@@ -179,7 +237,45 @@ class AdvancedInvestmentAnalyzer:
             final_results = []
             for news in gap_news:
                 res = news.get('_analysis_result')
-                if res: final_results.append((news, res))
+                if not res:
+                    continue
+
+                base_conf = res.get('confidence', 0)
+                gap_conf = news.get('gap_confidence', 0.5)
+                validation_score = res.get('validation_score', 0)
+
+                confidence_effective = base_conf + (gap_conf - 0.5) * 0.2 + (validation_score - 0.5) * 0.2
+                confidence_effective = max(0.0, min(1.0, confidence_effective))
+
+                res['confidence_effective'] = confidence_effective
+                res['gap_confidence'] = gap_conf
+                res['coverage_status'] = news.get('coverage_status', 'unknown')
+                res['event_cluster_id'] = news.get('_cluster_id')
+                res['event_signature'] = news.get('_event_signature')
+                res['validation_score'] = validation_score
+
+                # 从配置读取阈值
+                threshold = self.llm_analyzer.threshold_normal
+                if res.get('stock_data'):
+                    for s in res['stock_data']:
+                        if s.get('is_hold'): 
+                            threshold = self.llm_analyzer.threshold_hold
+                            break
+
+                self.llm_analyzer.db.update_signals_by_news_title(
+                    news.get('title'),
+                    confidence_effective=confidence_effective,
+                    event_cluster_id=res.get('event_cluster_id'),
+                    event_signature=res.get('event_signature'),
+                    gap_confidence=gap_conf,
+                    validation_score=validation_score,
+                    coverage_status=res.get('coverage_status'),
+                )
+
+                if confidence_effective >= threshold:
+                    final_results.append((news, res))
+                else:
+                    logger.info(f"🗑️ 二次过滤: 价值低 ({confidence_effective:.2f})")
 
             if final_results:
                 await self.send_report(final_results, chat_id)
@@ -210,6 +306,8 @@ class AdvancedInvestmentAnalyzer:
             concept_str = analysis.get('concept', '热点事件')
             event_memo = analysis.get('event_memo', {})
             template_info = analysis.get('event_template', {})
+            event_cluster_id = analysis.get('event_cluster_id')
+            event_signature = analysis.get('event_signature')
 
             memo_lines = []
             if event_memo:
@@ -222,6 +320,8 @@ class AdvancedInvestmentAnalyzer:
                 ]
 
                 try:
+                    event_memo['event_cluster_id'] = event_cluster_id
+                    event_memo['event_signature'] = event_signature
                     self.llm_analyzer.db.save_event_memo(
                         news_title=news['title'],
                         template_label=template_info.get('label'),
@@ -250,6 +350,9 @@ class AdvancedInvestmentAnalyzer:
             transmission_path = event_memo.get('transmission_path')
             alert_level = event_memo.get('alert_level', 'info')
             alert_keywords = event_memo.get('alert_keywords', '')
+            validation_score = analysis.get('validation_score', 0)
+            gap_confidence = analysis.get('gap_confidence', 0.5)
+            confidence_effective = analysis.get('confidence_effective', analysis.get('confidence', 0))
 
             full_msg = (
                 f"{icon} **{news['title']}**\n"
@@ -257,6 +360,9 @@ class AdvancedInvestmentAnalyzer:
                 f"🧭 **模板**: {template_label or '未匹配'}\n"
                 f"🏷️ **方向**: {sector_note or '未分类'}\n\n"
                 f"{final_report}\n\n"
+                f"🧩 **事件簇**: #{event_cluster_id or 'NA'}\n"
+                f"🧪 **验证分**: {validation_score:.2f} | **信息差**: {gap_confidence:.2f}\n"
+                f"🧠 **有效置信度**: {confidence_effective:.2f}\n\n"
                 f"🛣️ **传导路径**: {transmission_path or '待确认'}\n\n"
                 f"🔔 **推送等级**: {'强弹窗' if alert_level == 'strong' else '普通推送' if alert_level == 'normal' else '信息提示'}\n"
                 f"🧩 **命中关键词**: {alert_keywords or '未命中'}\n\n"
@@ -537,11 +643,19 @@ class AdvancedInvestmentAnalyzer:
         else:
             msg += "❌ 未配置\n"
 
+        # 检查 Kimi
+        msg += "\n🛰️ **Kimi API**\n"
+        if self.llm_analyzer.kimi_key:
+            msg += "✅ 已配置 (fallback)\n"
+        else:
+            msg += "❌ 未配置\n"
+
         # 添加说明
         msg += "\n💡 **提示**:\n"
         msg += "• Gemini 免费版每天太平洋时间午夜重置\n"
         msg += "• Qwen/DeepSeek 配额较充足\n"
-        msg += "• 使用 `/status` 查看系统状态"
+        msg += "• `/gemini` 可能会走其他可用Key或自动切换到 Kimi"
+        msg += "\n• 使用 `/status` 查看系统状态"
 
         await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
 
@@ -953,12 +1067,13 @@ async def status_command(u, c):
     gemini_keys_count = len(analyzer.llm_analyzer.gemini_keys)
     gemini_status = f"✅ 就绪 ({gemini_keys_count} Keys)" if gemini_keys_count > 0 else "❌ 未配置"
     redis_status = "✅ 已连接" if analyzer.redis_client else "❌ 断开"
+    server_label = os.getenv("SERVER_LABEL", "Unraid (Local)")
     msg = f"""🏥 **系统状态诊断**
 
 🧠 **DeepSeek**: {ds_status}
 ⚖️ **Gemini**: {gemini_status}
 💾 **Redis**: {redis_status}
-📍 **Server**: Los Angeles (VPS)"""
+📍 **Server**: {server_label}"""
     await u.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
 
 # ================= 启动逻辑 =================

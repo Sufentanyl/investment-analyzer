@@ -11,8 +11,15 @@ import asyncio
 import aiohttp
 import random
 import yaml
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 import yfinance as yf
+import pytz
+
+try:
+    from telegram.constants import ParseMode
+except Exception:
+    ParseMode = None
 
 logger = logging.getLogger(__name__)
 
@@ -191,6 +198,7 @@ class LLMAnalyzer:
 
     async def analyze_cross_validate(self, title: str, content: str) -> Dict[str, Any]:
         """Buffett vs Munger 辩论模式"""
+        self._ensure_clients()
         agents = self.config.get('agents', {})
         if not agents or 'bull_agent' not in agents:
             result = await self._analyze_legacy(title, content)
@@ -246,6 +254,11 @@ class LLMAnalyzer:
 
         if related_tickers:
             final_decision['stock_data'] = self._enrich_market_data(related_tickers)
+            if final_decision.get('stock_data'):
+                max_reaction = max([s.get('reaction_score', 0) for s in final_decision['stock_data']])
+                final_decision['validation_score'] = max_reaction
+            else:
+                final_decision['validation_score'] = 0
             for stock in final_decision['stock_data']:
                 try:
                     self.db.save_signal(
@@ -259,10 +272,13 @@ class LLMAnalyzer:
                     )
                 except Exception as e:
                     logger.error(f"保存信号失败: {e}")
+        else:
+            final_decision['validation_score'] = 0
 
         return self._attach_event_context(title, content, final_decision)
 
     async def _analyze_legacy(self, title, content):
+        self._ensure_clients()
         if not self.client_ds: return {}
         prompt = self._build_deep_logic_prompt(title, content)
         return await self._call_llm_json_async(self.client_ds, self.deepseek_model, prompt, "DeepSeek")
@@ -339,6 +355,7 @@ class LLMAnalyzer:
 
     @retry_async()
     async def _get_related_stocks_by_ai(self, title, concept, reason):
+        self._ensure_clients()
         if not self.client_qwen: return []
         prompt = f"任务：A股产业链联想\n新闻：{title}\n概念：{concept}\n输出JSON Only：{{ \"stocks\": [ {{ \"code\": \"600xxx\", \"name\": \"中文名\" }} ] }}"
         try:
@@ -423,11 +440,17 @@ class LLMAnalyzer:
             msg += f"✅ 已自动切换到Kimi替补\n"
             msg += f"⏰ {datetime.now(pytz.timezone('Asia/Shanghai')).strftime('%H:%M')}"
 
-            await self.telegram_bot.send_message(
-                chat_id=self.chat_id,
-                text=msg,
-                parse_mode=ParseMode.MARKDOWN
-            )
+            if ParseMode:
+                await self.telegram_bot.send_message(
+                    chat_id=self.chat_id,
+                    text=msg,
+                    parse_mode=ParseMode.MARKDOWN
+                )
+            else:
+                await self.telegram_bot.send_message(
+                    chat_id=self.chat_id,
+                    text=msg
+                )
             logger.info(f"已发送API切换通知: {api_name} -> Kimi")
         except Exception as e:
             logger.error(f"发送Telegram通知失败: {e}")
@@ -435,8 +458,16 @@ class LLMAnalyzer:
     async def _call_gemini_json(self, prompt: str) -> Dict:
         text = await self._call_gemini_text(prompt + "\n请务必只输出 JSON，不要 Markdown。")
         try:
-            return json.loads(re.sub(r"```json|```", "", text).strip())
+            cleaned = re.sub(r"```json|```", "", text).strip()
+            return json.loads(cleaned)
         except Exception as e:
+            # 尝试从文本中截取 JSON
+            try:
+                match = re.search(r"\{.*\}", text, re.DOTALL)
+                if match:
+                    return json.loads(match.group(0))
+            except Exception as e2:
+                logger.error(f"Gemini JSON 解析失败: {e2}")
             logger.error(f"Gemini JSON 解析失败: {e}")
             return {}
     
@@ -464,6 +495,14 @@ class LLMAnalyzer:
                 if not hist.empty and len(hist) > 20:
                     ta_res = self.ta.analyze(hist)
                     chart = generate_snapshot(hist, item.get('name', code))
+
+                    # 量价验证评分（近1日量价异动）
+                    recent = hist.iloc[-1]
+                    prev = hist.iloc[-2]
+                    vol_mean = hist['Volume'].iloc[-20:].mean()
+                    vol_ratio = (recent['Volume'] / vol_mean) if vol_mean else 0
+                    price_move = abs(recent['Close'] - prev['Close']) / prev['Close'] if prev['Close'] else 0
+                    reaction_score = min(1.0, 0.6 * min(vol_ratio / 2.0, 1.0) + 0.4 * min(price_move / 0.03, 1.0))
                     
                     tech_summary = ta_res.get("summary", "数据不足")
                     bt = ta_res.get("backtest")
@@ -478,7 +517,8 @@ class LLMAnalyzer:
                         "price": f"{hist['Close'].iloc[-1]:.2f}", 
                         "tech": tech_summary, 
                         "chart": chart,
-                        "win_rate": bt.get('win_rate', 0) if bt else 0
+                        "win_rate": bt.get('win_rate', 0) if bt else 0,
+                        "reaction_score": round(reaction_score, 3)
                     })
             except Exception as e:
                 logger.error(f"行情获取失败 {code}: {e}")

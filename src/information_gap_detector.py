@@ -57,17 +57,23 @@ class InformationGapDetector:
             return news_list
 
         gap_news = []
+        concurrency = int(os.getenv("GAP_DETECT_CONCURRENCY", "5"))
+        sem = asyncio.Semaphore(concurrency)
         tasks = []
         for news in news_list:
-            tasks.append(self._check_single_news(news))
+            tasks.append(self._check_single_news_with_sem(sem, news))
         
         results = await asyncio.gather(*tasks)
         
         for news, is_gap in zip(news_list, results):
             if is_gap:
                 gap_news.append(news)
-        
+
         return gap_news
+
+    async def _check_single_news_with_sem(self, sem: asyncio.Semaphore, news) -> bool:
+        async with sem:
+            return await self._check_single_news(news)
 
     async def _check_single_news(self, news) -> bool:
         """
@@ -81,7 +87,8 @@ class InformationGapDetector:
         if not title: return False
 
         # 1. 查缓存 (🔥 修复: 添加并发安全)
-        news_hash = hashlib.md5(title.encode()).hexdigest()
+        url = news.get("url", "")
+        news_hash = hashlib.md5(f"{title}|{url}".encode("utf-8")).hexdigest()
 
         async with self.cache_lock:
             if news_hash in self.cache:
@@ -101,47 +108,74 @@ class InformationGapDetector:
                 logger.info(f"🔀 关键词转换: '{title[:20]}...' -> '{search_query}'")
 
         # 3. 执行搜索
-        api_key = self._get_api_key()
-        if not api_key: return True
+        for attempt in range(2):
+            api_key = self._get_api_key()
+            if not api_key:
+                return False
 
-        params = {
-            "engine": "google_news",
-            "q": search_query,       # 搜中文词！
-            "gl": "cn",              # 地区：中国
-            "hl": "zh-cn",           # 语言：简体中文
-            "api_key": api_key,
-            "num": 5
-        }
+            params = {
+                "engine": "google_news",
+                "q": search_query,       # 搜中文词！
+                "gl": "cn",              # 地区：中国
+                "hl": "zh-cn",           # 语言：简体中文
+                "api_key": api_key,
+                "num": 5
+            }
 
-        try:
-            # 🔥 修复: 使用复用的 session
-            session = await self._get_session()
-            async with session.get("https://serpapi.com/search", params=params, timeout=15) as response:
-                if response.status == 200:
-                    data = await response.json()
+            try:
+                # 🔥 修复: 使用复用的 session
+                session = await self._get_session()
+                async with session.get("https://serpapi.com/search", params=params, timeout=15) as response:
+                    if response.status == 200:
+                        data = await response.json()
 
-                    # 判断逻辑：只要有结果，就说明国内报了
-                    has_coverage = False
-                    if "news_results" in data and len(data["news_results"]) > 0:
-                        has_coverage = True
-                        source = data['news_results'][0].get('source', {}).get('title', '未知媒体')
-                        logger.info(f"⚖️ 国内已报道: {search_query} -> 来源: {source}")
-                    else:
-                        logger.info(f"💎 确认信息差: {search_query} (国内暂无)")
+                        # 判断逻辑：只要有结果，就说明国内报了
+                        has_coverage = False
+                        coverage_sources = []
+                        if "news_results" in data and len(data["news_results"]) > 0:
+                            has_coverage = True
+                            for item in data["news_results"][:3]:
+                                source = item.get('source', {}).get('title', '未知媒体')
+                                if source:
+                                    coverage_sources.append(source)
+                            logger.info(f"⚖️ 国内已报道: {search_query} -> 来源: {', '.join(coverage_sources) or '未知'}")
+                        else:
+                            logger.info(f"💎 确认信息差: {search_query} (国内暂无)")
 
-                    # 🔥 修复: 限制缓存大小，防止内存泄漏
-                    async with self.cache_lock:
-                        if len(self.cache) >= self.max_cache_size:
-                            self.cache.popitem(last=False)  # 删除最旧的
-                        self.cache[news_hash] = {'has_gap': not has_coverage, 'timestamp': datetime.now()}
+                        news['coverage_status'] = "covered" if has_coverage else "not_covered"
+                        news['coverage_sources'] = coverage_sources
+                        news['coverage_count'] = len(coverage_sources)
+                        news['gap_confidence'] = 0.15 if has_coverage else 0.7
 
-                    return not has_coverage
-                else:
-                    logger.warning(f"SerpApi 异常: {response.status}")
-                    return True
-        except Exception as e:
-            logger.error(f"信息差检测出错: {e}")
-            return True
+                        # 🔥 修复: 限制缓存大小，防止内存泄漏
+                        async with self.cache_lock:
+                            if len(self.cache) >= self.max_cache_size:
+                                self.cache.popitem(last=False)  # 删除最旧的
+                            self.cache[news_hash] = {'has_gap': not has_coverage, 'timestamp': datetime.now()}
+
+                        return not has_coverage
+
+                    if response.status in (429, 500, 502, 503, 504) and attempt == 0:
+                        await asyncio.sleep(1.5)
+                        continue
+
+                    news['coverage_status'] = "unknown"
+                    news['coverage_sources'] = []
+                    news['coverage_count'] = 0
+                    news['gap_confidence'] = 0.4
+                    logger.warning(f"SerpApi 异常: {response.status}，降级为无信息差")
+                    return False
+            except Exception as e:
+                if attempt == 0:
+                    await asyncio.sleep(1.5)
+                    continue
+                news['coverage_status'] = "unknown"
+                news['coverage_sources'] = []
+                news['coverage_count'] = 0
+                news['gap_confidence'] = 0.4
+                logger.error(f"信息差检测出错: {e}，降级为无信息差")
+                return False
+        return False
 
     async def _get_chinese_keywords(self, english_title: str) -> str:
         """
