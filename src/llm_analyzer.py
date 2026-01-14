@@ -380,20 +380,96 @@ class LLMAnalyzer:
 
     @retry_async()
     async def _call_gemini_text(self, prompt: str) -> str:
-        """调用Gemini API，失败时fallback到Kimi"""
+        """调用Gemini API（支持联网搜索），失败时fallback到Kimi"""
         if not self.gemini_keys:
             logger.warning("Gemini Key缺失，使用Kimi替补")
             return await self._call_kimi_text(prompt)
 
         key = random.choice(self.gemini_keys)
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.gemini_model}:generateContent?key={key}"
+
+        # 🔥 声明 Google Search 工具
+        tools = [
+            {
+                "function_declarations": [
+                    {
+                        "name": "google_search",
+                        "description": "搜索实时信息（新闻、股价、天气等）",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "query": {
+                                    "type": "string",
+                                    "description": "搜索查询"
+                                }
+                            },
+                            "required": ["query"]
+                        }
+                    }
+                ]
+            }
+        ]
+
         try:
-            # 🔥 修复: 使用复用的 session
             session = await self._get_aiohttp_session()
-            async with session.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=30) as resp:
+
+            # 第一次调用：可能触发 function call
+            payload = {
+                "contents": [{"parts": [{"text": prompt}]}],
+                "tools": tools
+            }
+
+            async with session.post(url, json=payload, timeout=30) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    return data['candidates'][0]['content']['parts'][0]['text']
+
+                    # 检查是否有 function call
+                    candidate = data.get('candidates', [{}])[0]
+                    content_parts = candidate.get('content', {}).get('parts', [])
+
+                    for part in content_parts:
+                        if 'functionCall' in part:
+                            # 模型要求搜索
+                            function_call = part['functionCall']
+                            function_name = function_call.get('name')
+                            args = function_call.get('args', {})
+
+                            logger.info(f"🔍 Gemini 请求搜索: {function_name}({args})")
+
+                            if function_name == 'google_search':
+                                # 调用 SerpApi 搜索
+                                search_results = await self._google_search(args['query'])
+
+                                # 构建函数响应
+                                function_response = {
+                                    "functionResponse": {
+                                        "name": function_name,
+                                        "response": search_results
+                                    }
+                                }
+
+                                # 第二次调用：提供搜索结果
+                                payload2 = {
+                                    "contents": [
+                                        {"parts": [{"text": prompt}]},
+                                        {"parts": [{"functionResponse": function_response}]}
+                                    ]
+                                }
+
+                                async with session.post(url, json=payload2, timeout=30) as resp2:
+                                    if resp2.status == 200:
+                                        data2 = await resp2.json()
+                                        return data2['candidates'][0]['content']['parts'][0]['text']
+                                    else:
+                                        logger.warning(f"Gemini 搜索后响应错误: {resp2.status}")
+                                        return await self._call_kimi_text(prompt)
+
+                    # 如果没有 function call，直接返回文本
+                    if 'text' in content_parts[0]:
+                        return content_parts[0]['text']
+
+                    return "抱歉，无法生成回复。"
+
                 elif resp.status == 429:
                     logger.warning(f"Gemini API 配额用尽 (HTTP 429)，切换到Kimi替补")
                     await self._send_fallback_notification("Gemini", "配额用尽")
@@ -406,6 +482,39 @@ class LLMAnalyzer:
             logger.error(f"Gemini 调用异常: {e}")
             await self._send_fallback_notification("Gemini", str(e))
             return await self._call_kimi_text(prompt)
+
+    async def _google_search(self, query: str) -> str:
+        """使用 SerpApi 进行 Google 搜索"""
+        serpapi_key = os.getenv('SERPAPI_KEY')
+        if not serpapi_key:
+            logger.warning("SerpApi Key缺失，无法搜索")
+            return "搜索服务暂时不可用"
+
+        try:
+            session = await self._get_aiohttp_session()
+            params = {
+                "engine": "google",
+                "q": query,
+                "api_key": serpapi_key,
+                "num": 5  # 限制结果数量
+            }
+
+            async with session.get("https://serpapi.com/search", params=params, timeout=10) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+
+                    # 格式化搜索结果
+                    results = []
+                    for item in data.get('organic_results', [])[:3]:
+                        results.append(f"标题: {item.get('title', '')}\n链接: {item.get('link', '')}\n摘要: {item.get('snippet', '')}")
+
+                    return "\n\n".join(results)
+                else:
+                    logger.warning(f"SerpApi 搜索失败: HTTP {resp.status}")
+                    return "搜索失败"
+        except Exception as e:
+            logger.error(f"Google 搜索异常: {e}")
+            return "搜索异常"
 
     async def _call_kimi_text(self, prompt: str) -> str:
         """🔥 新增: 调用Kimi API作为替补"""
@@ -472,10 +581,25 @@ class LLMAnalyzer:
             return {}
     
     async def chat_with_model(self, model_alias: str, text: str) -> str:
+        """🤖 多模型聊天路由"""
         self._ensure_clients()
+
+        # 获取当前日期
+        from datetime import datetime
+        current_date = datetime.now().strftime("%Y年%m月%d日 %A")
+
+        # 构建带日期的 prompt
+        enhanced_prompt = f"【当前日期】{current_date}\n\n【用户问题】{text}\n\n请基于当前日期回答问题。"
+
         if model_alias == 'deepseek' and self.client_ds:
-            return await self._call_llm_text_async(self.client_ds, self.deepseek_model, text)
-        return await self._call_gemini_text(text)
+            return await self._call_llm_text_async(self.client_ds, self.deepseek_model, enhanced_prompt)
+        elif model_alias == 'qwen' and self.client_qwen:
+            return await self._call_llm_text_async(self.client_qwen, self.qwen_model, enhanced_prompt)
+        elif model_alias == 'gemini':
+            return await self._call_gemini_text(enhanced_prompt)
+        else:
+            # 默认使用 Gemini
+            return await self._call_gemini_text(enhanced_prompt)
 
     @retry_async()
     async def _call_llm_text_async(self, client, model, prompt):
