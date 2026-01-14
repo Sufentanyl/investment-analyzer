@@ -37,6 +37,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# 🔥 全局标志：防止重复发送启动通知
+_startup_notification_sent = False
+
 # 🔥 死前遗言发送函数
 async def send_death_notification(token, chat_id, error_msg):
     try:
@@ -1164,7 +1167,7 @@ async def status_command(u, c):
 # ================= 启动逻辑 =================
 async def post_init(app):
     app.bot_data['analyzer'].start_scheduler()
-    
+
     commands = [
         BotCommand("start", "📖 使用说明书"),
         BotCommand("analyze", "👮 手动巡逻"),
@@ -1189,13 +1192,16 @@ async def post_init(app):
         BotCommand("qwen", "💭 问Qwen"),
     ]
     await app.bot.set_my_commands(commands)
-    
-    if app.bot_data['analyzer'].chat_id:
+
+    # 🔥 防止重复发送启动通知
+    global _startup_notification_sent
+    if app.bot_data['analyzer'].chat_id and not _startup_notification_sent:
         try:
             await app.bot_data['analyzer'].telegram_bot.send_message(
                 chat_id=app.bot_data['analyzer'].chat_id,
                 text="🚀 机器人重启完成！\n✅ 系统已升级"
             )
+            _startup_notification_sent = True
         except Exception as e:
             logger.warning(f"发送重启通知失败: {e}")
 
