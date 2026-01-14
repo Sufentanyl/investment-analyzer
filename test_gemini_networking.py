@@ -5,7 +5,7 @@ import os
 
 # 从环境变量或直接设置
 GEMINI_API_KEY = '***REMOVED***,***REMOVED***,***REMOVED***,***REMOVED***,***REMOVED***'
-GEMINI_MODEL = 'gemini-2.0-flash-exp'  # 测试用，实际使用gemini-3-pro-preview
+GEMINI_MODEL = 'gemini-3-flash-preview'  # 正确的模型名称
 
 async def test_gemini_basic():
     """测试基础Gemini API调用（无Function Calling）"""
