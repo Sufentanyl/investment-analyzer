@@ -479,8 +479,11 @@ class LLMAnalyzer:
                     await self._send_fallback_notification("Gemini", f"HTTP {resp.status}")
                     return await self._call_kimi_text(prompt)
         except Exception as e:
-            logger.error(f"Gemini 调用异常: {e}")
-            await self._send_fallback_notification("Gemini", str(e))
+            import traceback
+            error_detail = f"{type(e).__name__}: {str(e)}" if str(e) else f"{type(e).__name__}"
+            logger.error(f"Gemini 调用异常: {error_detail}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            await self._send_fallback_notification("Gemini", error_detail)
             return await self._call_kimi_text(prompt)
 
     async def _google_search(self, query: str) -> str:
@@ -588,9 +591,10 @@ class LLMAnalyzer:
         """🤖 多模型聊天路由"""
         self._ensure_clients()
 
-        # 获取当前日期
+        # 获取当前日期（中文格式）
         from datetime import datetime
-        current_date = datetime.now().strftime("%Y年%m月%d日 %A")
+        weekdays = ['星期一', '星期二', '星期三', '星期四', '星期五', '星期六', '星期日']
+        current_date = datetime.now().strftime(f"%Y年%m月%d日 {weekdays[datetime.now().weekday()]}")
 
         # 构建带日期的 prompt
         enhanced_prompt = f"【当前日期】{current_date}\n\n【用户问题】{text}\n\n请基于当前日期回答问题。"
