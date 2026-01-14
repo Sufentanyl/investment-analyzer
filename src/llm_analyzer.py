@@ -685,15 +685,15 @@ class LLMAnalyzer:
                     logger.warning(f"股票 {code} 数据不足，跳过分析")
                     continue
 
-                # 计算基本指标
-                latest = df.iloc[0]
-                prev_5 = df.iloc[4] if len(df) > 4 else df.iloc[-1]
-                prev_10 = df.iloc[9] if len(df) > 9 else df.iloc[-1]
+                # 计算基本指标（akshare返回的数据，索引0是最旧的，索引-1是最新的）
+                latest = df.iloc[-1]
+                prev_5 = df.iloc[-5] if len(df) >= 5 else df.iloc[0]
+                prev_10 = df.iloc[-10] if len(df) >= 10 else df.iloc[0]
 
                 current_price = latest['收盘']
-                ma5 = df['收盘'].head(5).mean()
-                ma10 = df['收盘'].head(10).mean()
-                ma20 = df['收盘'].head(20).mean() if len(df) >= 20 else None
+                ma5 = df['收盘'].tail(5).mean()
+                ma10 = df['收盘'].tail(10).mean()
+                ma20 = df['收盘'].tail(20).mean() if len(df) >= 20 else None
 
                 # 价格变化
                 change_5d = (current_price - prev_5['收盘']) / prev_5['收盘'] * 100
@@ -701,7 +701,7 @@ class LLMAnalyzer:
 
                 # 成交量变化
                 volume_latest = latest['成交量']
-                volume_avg = df['成交量'].head(10).mean()
+                volume_avg = df['成交量'].tail(10).mean()
                 volume_ratio = volume_latest / volume_avg if volume_avg > 0 else 1
 
                 # 准备AI分析的上下文
@@ -716,7 +716,7 @@ class LLMAnalyzer:
 【20日均线】{ma20:.2f}元（如果存在）
 【成交量】{volume_latest:,.0f}手，{volume_ratio:.1f}倍于10日均量
 
-【价格序列】最近10日收盘价: {', '.join([f'{x:.2f}' for x in df['收盘'].head(10).tolist()[::-1]])}
+【价格序列】最近10日收盘价: {', '.join([f'{x:.2f}' for x in df['收盘'].tail(10).tolist()[::-1]])}
 
 请分析：
 1. 趋势判断：上涨、下跌、震荡（choose one: 上涨/下跌/震荡）
