@@ -153,8 +153,18 @@ def load_data():
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
         tables = [t[0] for t in cursor.fetchall()]
 
-        # 兼容处理：如果存在 ai_signals 表，使用它；否则使用 signals 表
-        table_name = 'ai_signals' if 'ai_signals' in tables else ('signals' if 'signals' in tables else None)
+        # 兼容处理：优先使用 signals 表（最新数据），如果为空则使用 ai_signals 表
+        table_name = None
+        if 'signals' in tables:
+            # 检查signals表是否有数据
+            cursor.execute(f"SELECT COUNT(*) FROM signals")
+            signals_count = cursor.fetchone()[0]
+            if signals_count > 0:
+                table_name = 'signals'
+            elif 'ai_signals' in tables:
+                table_name = 'ai_signals'
+        elif 'ai_signals' in tables:
+            table_name = 'ai_signals'
 
         if not table_name:
             st.error("❌ 数据库中未找到信号表")
