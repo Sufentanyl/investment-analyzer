@@ -658,3 +658,179 @@ class LLMAnalyzer:
 
     def _build_deep_logic_prompt(self, title, content):
         return f"分析新闻：{title}\n输出JSON: {{ 'stock_market_influence': 'positive/neutral', 'confidence': 0.8, 'reason': '...' }}"
+
+    async def analyze_holdings_trend(self, stock_codes: List[str]) -> List[Dict]:
+        """📊 分析持仓股票走势（不依赖新闻）"""
+        import akshare as ak
+        import pandas as pd
+        from datetime import datetime, timedelta
+
+        results = []
+
+        for code in stock_codes:
+            try:
+                # 获取最近30天的日线数据
+                end_date = datetime.now().strftime('%Y%m%d')
+                start_date = (datetime.now() - timedelta(days=30)).strftime('%Y%m%d')
+
+                # 使用 akshare 获取股票数据
+                if code.startswith('6'):  # 上交所
+                    df = ak.stock_zh_a_hist(symbol=code, period="daily",
+                                          start_date=start_date, end_date=end_date, adjust="qfq")
+                else:  # 深交所
+                    df = ak.stock_zh_a_hist(symbol=code, period="daily",
+                                          start_date=start_date, end_date=end_date, adjust="qfq")
+
+                if df.empty or len(df) < 10:
+                    logger.warning(f"股票 {code} 数据不足，跳过分析")
+                    continue
+
+                # 计算基本指标
+                latest = df.iloc[0]
+                prev_5 = df.iloc[4] if len(df) > 4 else df.iloc[-1]
+                prev_10 = df.iloc[9] if len(df) > 9 else df.iloc[-1]
+
+                current_price = latest['收盘']
+                ma5 = df['收盘'].head(5).mean()
+                ma10 = df['收盘'].head(10).mean()
+                ma20 = df['收盘'].head(20).mean() if len(df) >= 20 else None
+
+                # 价格变化
+                change_5d = (current_price - prev_5['收盘']) / prev_5['收盘'] * 100
+                change_10d = (current_price - prev_10['收盘']) / prev_10['收盘'] * 100
+
+                # 成交量变化
+                volume_latest = latest['成交量']
+                volume_avg = df['成交量'].head(10).mean()
+                volume_ratio = volume_latest / volume_avg if volume_avg > 0 else 1
+
+                # 准备AI分析的上下文
+                analysis_prompt = f"""你是一位专业的股票技术分析师。请基于以下数据判断股票走势：
+
+【股票代码】{code}
+【当前价格】{current_price:.2f}元
+【5日涨跌】{change_5d:+.2f}%
+【10日涨跌】{change_10d:+.2f}%
+【5日均线】{ma5:.2f}元
+【10日均线】{ma10:.2f}元
+【20日均线】{ma20:.2f}元（如果存在）
+【成交量】{volume_latest:,.0f}手，{volume_ratio:.1f}倍于10日均量
+
+【价格序列】最近10日收盘价: {', '.join([f'{x:.2f}' for x in df['收盘'].head(10).tolist()[::-1]])}
+
+请分析：
+1. 趋势判断：上涨、下跌、震荡（choose one: 上涨/下跌/震荡）
+2. 信心度：0.0-1.0之间的数值
+3. 支撑理由：100字以内的技术分析
+4. 关键位：支撑位和压力位（元）
+
+输出JSON格式：
+{{
+  "trend": "上涨/下跌/震荡",
+  "confidence": 0.75,
+  "reason": "均线多头排列，成交量放大...",
+  "support": 100.50,
+  "resistance": 105.80
+}}"""
+
+                # 调用AI分析
+                self._ensure_clients()
+
+                # 优先使用 DeepSeek（分析能力强）
+                if self.client_ds:
+                    analysis_result = await self._call_llm_json_async(
+                        self.client_ds,
+                        self.deepseek_model,
+                        analysis_prompt,
+                        "DeepSeek"
+                    )
+                elif self.client_qwen:
+                    analysis_result = await self._call_llm_json_async(
+                        self.client_qwen,
+                        self.qwen_model,
+                        analysis_prompt,
+                        "Qwen"
+                    )
+                else:
+                    # 如果都不可用，使用基础规则判断
+                    analysis_result = self._fallback_trend_analysis(
+                        current_price, ma5, ma10, change_5d, change_10d, volume_ratio
+                    )
+
+                if analysis_result:
+                    # 保存到数据库
+                    trend = analysis_result.get('trend', '震荡')
+                    confidence = analysis_result.get('confidence', 0.5)
+                    reason = analysis_result.get('reason', '暂无分析')
+
+                    # 映射 trend 到 signal
+                    trend_to_signal = {
+                        '上涨': 'positive',
+                        '下跌': 'negative',
+                        '震荡': 'neutral'
+                    }
+                    signal_type = trend_to_signal.get(trend, 'neutral')
+
+                    # 保存趋势分析信号
+                    self.db.save_signal(
+                        stock_code=code,
+                        news_title=f"[持仓监控] {code} 走势分析",
+                        signal=signal_type,
+                        confidence=confidence,
+                        reason=reason,
+                        price=float(current_price),
+                        summary=f"支撑位: {analysis_result.get('support', 'N/A')} | 压力位: {analysis_result.get('resistance', 'N/A')}",
+                        confidence_effective=confidence
+                    )
+
+                    results.append({
+                        'code': code,
+                        'trend': trend,
+                        'signal': signal_type,
+                        'confidence': confidence,
+                        'reason': reason,
+                        'current_price': current_price,
+                        'support': analysis_result.get('support'),
+                        'resistance': analysis_result.get('resistance'),
+                        'change_5d': change_5d,
+                        'change_10d': change_10d,
+                        'volume_ratio': volume_ratio,
+                        'analyzed_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    })
+
+                    logger.info(f"✅ {code} 走势分析完成: {trend} (信心度: {confidence:.2f})")
+
+            except Exception as e:
+                logger.error(f"❌ 股票 {code} 趋势分析失败: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+
+        return results
+
+    def _fallback_trend_analysis(self, price, ma5, ma10, change_5d, change_10d, volume_ratio):
+        """基础规则分析（当AI不可用时）"""
+        # 简单的均线策略
+        if price > ma5 > ma10 and change_5d > 2:
+            return {
+                'trend': '上涨',
+                'confidence': 0.7,
+                'reason': f'价格{price:.2f}突破均线，5日涨幅{change_5d:+.1f}%',
+                'support': round(ma5 * 0.98, 2),
+                'resistance': round(price * 1.02, 2)
+            }
+        elif price < ma5 < ma10 and change_5d < -2:
+            return {
+                'trend': '下跌',
+                'confidence': 0.7,
+                'reason': f'价格{price:.2f}跌破均线，5日跌幅{change_5d:+.1f}%',
+                'support': round(price * 0.98, 2),
+                'resistance': round(ma5 * 1.02, 2)
+            }
+        else:
+            return {
+                'trend': '震荡',
+                'confidence': 0.5,
+                'reason': f'价格在均线附近震荡，5日涨跌{change_5d:+.1f}%',
+                'support': round(min(price, ma5) * 0.98, 2),
+                'resistance': round(max(price, ma5) * 1.02, 2)
+            }

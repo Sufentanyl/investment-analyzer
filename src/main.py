@@ -430,7 +430,74 @@ class AdvancedInvestmentAnalyzer:
         # 🔥 修改为 45 分钟
         scheduler.add_job(self.run_analysis, trigger=IntervalTrigger(minutes=45), id='interval_monitor', max_instances=1)
         scheduler.add_job(self.report_futures, trigger=CronTrigger(hour=9, minute=15), id='futures_morning_report')
+        # 🆕 新增：每天10点和15点分析持仓股票走势
+        scheduler.add_job(self.analyze_holdings, trigger=CronTrigger(hour='10,15', minute=0), id='holdings_monitor', max_instances=1)
         scheduler.start()
+
+    async def analyze_holdings(self, update: Update = None, context: ContextTypes.DEFAULT_TYPE = None, is_manual: bool = False):
+        """📊 分析持仓股票走势"""
+        try:
+            chat_id = update.effective_chat.id if update else self.chat_id
+
+            if is_manual:
+                await self.telegram_bot.send_message(chat_id=chat_id, text="📊 正在分析持仓股票走势...")
+
+            # 获取持仓列表
+            my_positions = self.llm_analyzer.config.get('my_positions', [])
+
+            if not my_positions:
+                if is_manual:
+                    await self.telegram_bot.send_message(chat_id=chat_id, text="📭 暂无持仓股票，请先用 /add 添加持仓")
+                return
+
+            # 调用分析
+            results = await self.llm_analyzer.analyze_holdings_trend(my_positions)
+
+            if not results:
+                if is_manual:
+                    await self.telegram_bot.send_message(chat_id=chat_id, text="❌ 持仓股票分析失败，请查看日志")
+                return
+
+            # 构建报告
+            report_lines = ["📊 **持仓股票走势分析**\n"]
+
+            for r in results:
+                code = r['code']
+                trend = r['trend']
+                confidence = r['confidence']
+                reason = r['reason']
+                price = r['current_price']
+                change_5d = r['change_5d']
+                support = r.get('support', 'N/A')
+                resistance = r.get('resistance', 'N/A')
+
+                # 趋势图标
+                trend_icons = {'上涨': '📈', '下跌': '📉', '震荡': '➡️'}
+                icon = trend_icons.get(trend, '❓')
+
+                report_lines.append(f"{icon} **{code}** {trend} (信心度: {confidence:.1%})")
+                report_lines.append(f"   当前价格: {price:.2f}元 | 5日: {change_5d:+.2f}%")
+                report_lines.append(f"   支撑位: {support} | 压力位: {resistance}")
+                report_lines.append(f"   分析: {reason}")
+                report_lines.append("")
+
+            full_msg = "\n".join(report_lines)
+
+            try:
+                await self.telegram_bot.send_message(chat_id=chat_id, text=full_msg, parse_mode=ParseMode.MARKDOWN)
+            except Exception as e:
+                logger.error(f"发送失败 (可能文本太长或Markdown错误): {e}")
+                try:
+                    await self.telegram_bot.send_message(chat_id=chat_id, text=full_msg)
+                except Exception as e2:
+                    logger.error(f"发送纯文本也失败: {e2}")
+
+            logger.info(f"✅ 持仓分析完成，分析 {len(results)} 只股票")
+
+        except Exception as e:
+            logger.error(f"持仓分析任务失败: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
 
     async def chat_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not context.args:
@@ -1031,6 +1098,7 @@ AI会自动学习，将概念关键词关联到股票
 ━━━━━━━━━━━━━━━
 `/add 代码` - 添加持仓
 `/del 代码` - 删除持仓
+`/holdings` - 📊 分析持仓走势（AI技术分析）
 `/clear` - 清空所有持仓
 `/list` - 查看配置
 `/alert_levels` - 调整推送等级
@@ -1067,8 +1135,12 @@ AI会自动学习，将概念关键词关联到股票
 async def chat_handler_wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot_data['analyzer'].chat_handler(update, context)
 
-async def analyze_command(u, c): 
+async def analyze_command(u, c):
     asyncio.create_task(c.bot_data['analyzer'].run_analysis(update=u, context=c, is_manual=True))
+
+async def analyze_holdings_command(u, c):
+    """📊 手动触发持仓股票走势分析"""
+    asyncio.create_task(c.bot_data['analyzer'].analyze_holdings(update=u, context=c, is_manual=True))
 
 async def futures_command(u, c): 
     data = await asyncio.to_thread(c.bot_data['analyzer'].futures_watcher.get_iron_ore_data)
@@ -1141,6 +1213,7 @@ def run_bot():
             
             app.add_handler(CommandHandler('start', start_command))
             app.add_handler(CommandHandler('analyze', analyze_command))
+            app.add_handler(CommandHandler('holdings', analyze_holdings_command))
             app.add_handler(CommandHandler('backtest', backtest_command))
             app.add_handler(CommandHandler('backtest_7d', backtest_7d_command))
             app.add_handler(CommandHandler('backtest_30d', backtest_30d_command))
