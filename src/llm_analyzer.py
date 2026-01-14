@@ -490,12 +490,16 @@ class LLMAnalyzer:
             logger.warning("SerpApi Key缺失，无法搜索")
             return "搜索服务暂时不可用"
 
+        # 从逗号分隔的keys中随机选择一个
+        keys = [k.strip() for k in serpapi_key.split(',')]
+        selected_key = random.choice(keys)
+
         try:
             session = await self._get_aiohttp_session()
             params = {
                 "engine": "google",
                 "q": query,
-                "api_key": serpapi_key,
+                "api_key": selected_key,
                 "num": 5  # 限制结果数量
             }
 
