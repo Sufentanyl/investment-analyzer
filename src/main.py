@@ -1195,7 +1195,6 @@ async def post_init(app):
 
     # 🔥 防止重复发送启动通知
     global _startup_notification_sent
-    logger.info(f"🔔 post_init 被调用，当前 _startup_notification_sent = {_startup_notification_sent}")
     if app.bot_data['analyzer'].chat_id and not _startup_notification_sent:
         try:
             await app.bot_data['analyzer'].telegram_bot.send_message(
@@ -1203,11 +1202,8 @@ async def post_init(app):
                 text="🚀 机器人重启完成！\n✅ 系统已升级"
             )
             _startup_notification_sent = True
-            logger.info("✅ 启动通知已发送，标志已设置为 True")
         except Exception as e:
             logger.warning(f"发送重启通知失败: {e}")
-    else:
-        logger.info("⏭️ 跳过重复的启动通知")
 
 def run_bot():
     token = os.getenv('TELEGRAM_BOT_TOKEN')
