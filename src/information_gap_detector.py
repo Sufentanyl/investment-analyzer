@@ -133,24 +133,30 @@ class InformationGapDetector:
                         has_coverage = False
                         coverage_sources = []
                         if "news_results" in data and len(data["news_results"]) > 0:
-                            has_coverage = True
                             for item in data["news_results"][:3]:
-                                source = item.get('source', {}).get('title', '未知媒体')
+                                source = item.get('source', {}).get('title', '????')
                                 if source:
                                     coverage_sources.append(source)
-                            logger.info(f"⚖️ 国内已报道: {search_query} -> 来源: {', '.join(coverage_sources) or '未知'}")
+                            min_coverage = int(os.getenv("GAP_COVERAGE_MIN", "2"))
+                            has_coverage = len(coverage_sources) >= min_coverage
+                            logger.info(
+                                f"?? ????: {search_query} -> ??: {', '.join(coverage_sources) or '??'} | count={len(coverage_sources)}"
+                            )
                         else:
-                            logger.info(f"💎 确认信息差: {search_query} (国内暂无)")
+                            logger.info(f"?? ?????: {search_query} (????)")
 
                         news['coverage_status'] = "covered" if has_coverage else "not_covered"
                         news['coverage_sources'] = coverage_sources
                         news['coverage_count'] = len(coverage_sources)
-                        news['gap_confidence'] = 0.15 if has_coverage else 0.7
+                        if has_coverage:
+                            news['gap_confidence'] = 0.2
+                        else:
+                            news['gap_confidence'] = 0.65 if coverage_sources else 0.75
 
-                        # 🔥 修复: 限制缓存大小，防止内存泄漏
+                        # ?? ??: ?????????????
                         async with self.cache_lock:
                             if len(self.cache) >= self.max_cache_size:
-                                self.cache.popitem(last=False)  # 删除最旧的
+                                self.cache.popitem(last=False)  # ?????
                             self.cache[news_hash] = {'has_gap': not has_coverage, 'timestamp': datetime.now()}
 
                         return not has_coverage

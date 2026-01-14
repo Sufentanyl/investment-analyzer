@@ -208,20 +208,27 @@ class AdvancedInvestmentAnalyzer:
                     self.mark_cluster_as_processed(news['_cluster_id'])
                 
                 res = await self.llm_analyzer.analyze_cross_validate(news['title'], news.get('content', ''))
-                if not res: continue
+                if not res:
+                    continue
 
                 allowed_levels = set(self.llm_analyzer.config.get('alert_levels_to_push', ['strong', 'normal']))
                 alert_level = res.get('event_memo', {}).get('alert_level', 'info')
                 if alert_level not in allowed_levels:
-                    logger.info(f"🧹 过滤低优先级: {alert_level} | {news['title']}")
-                    continue
+                    info_min = float(os.getenv("INFO_CONFIDENCE_MIN", "0.7"))
+                    confidence = res.get('confidence', 0)
+                    allow_info = alert_level == "info" and confidence >= info_min
+                    if not allow_info:
+                        logger.info(f"INFO level filtered: {alert_level} | {news['title']}")
+                        continue
 
                 influence = res.get('stock_market_influence', 'neutral')
-                if influence != 'neutral':
+                confidence = res.get('confidence', 0)
+                neutral_min = float(os.getenv("NEUTRAL_CONFIDENCE_MIN", "0.7"))
+                if influence != 'neutral' or confidence >= neutral_min:
                     news['_analysis_result'] = res
                     potentially_valuable_news.append(news)
                 else:
-                    logger.info(f"🗑️ AI 过滤: 价值低 ({influence})")
+                    logger.info(f"Neutral filtered: {influence} | {news['title']}")
 
             if not potentially_valuable_news:
                 if is_manual: await self.telegram_bot.send_message(chat_id=chat_id, text="⚖️ 本轮新闻经 AI 研判无重大影响。")

@@ -99,14 +99,14 @@ class DatabaseManager:
                 ''')
                 
                 # 🔥 优化2：添加索引，大幅提升查询速度
+                self._ensure_signal_columns(cursor)
+                self._ensure_event_memo_columns(cursor)
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_stock_code ON signals(stock_code);')
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_created_at ON signals(created_at);')
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_event_cluster_id ON signals(event_cluster_id);')
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_event_clusters_sig ON event_clusters(signature);')
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_event_clusters_seen ON event_clusters(last_seen);')
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_event_memos_created_at ON event_memos(created_at);')
-                self._ensure_signal_columns(cursor)
-                self._ensure_event_memo_columns(cursor)
                 
                 conn.commit()
                 logger.info("✅ 数据库初始化完成 (WAL模式 + 索引)")

@@ -8,6 +8,8 @@ import time
 from typing import List, Dict, Any
 import newspaper # 使用 newspaper3k 替代 Chrome
 import hashlib
+import json
+from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +30,19 @@ class AdvancedNewsCollector:
         
         self.rss_sources = {
             'bloomberg': 'https://feeds.bloomberg.com/markets/news.rss',
-            'reuters_biz': 'http://feeds.reuters.com/reuters/businessNews',
+            'reuters_world': 'https://www.reuters.com/world/rss',
+            'reuters_business': 'https://www.reuters.com/business/rss',
+            'reuters_markets': 'https://www.reuters.com/markets/rss',
+            'reuters_technology': 'https://www.reuters.com/technology/rss',
+            'reuters_legal': 'https://www.reuters.com/legal/rss',
+            'ft_markets': 'https://www.ft.com/markets?format=rss',
+            'ft_world': 'https://www.ft.com/world?format=rss',
+            'ft_companies': 'https://www.ft.com/companies?format=rss',
+            'ft_global_economy': 'https://www.ft.com/global-economy?format=rss',
+            'wsj_markets': 'https://feeds.a.dj.com/rss/RSSMarketsMain.xml',
+            'wsj_world': 'https://feeds.a.dj.com/rss/RSSWorldNews.xml',
+            'economist_world': 'https://www.economist.com/the-world-this-week/rss.xml',
+            'economist_economics': 'https://www.economist.com/finance-and-economics/rss.xml',
         }
         
         self.investment_keywords = {
@@ -43,8 +57,12 @@ class AdvancedNewsCollector:
         # 1. SerpApi
         if self.serpapi_key:
             all_news.extend(await self._collect_from_serpapi())
-        
-        # 2. RSS
+
+        # 2. NewsAPI (optional)
+        if self.newsapi_key:
+            all_news.extend(await self._collect_from_newsapi())
+
+        # 3. RSS
         all_news.extend(await self._collect_from_rss())
         
         # 3. 去重 + 按发布时间排序
@@ -57,7 +75,9 @@ class AdvancedNewsCollector:
         sem = asyncio.Semaphore(3)
         tasks = []
         for news in latest_news:
-            if len(news.get('content', '')) < 200:
+            source = news.get('source', '')
+            skip_fulltext = source.startswith("rss_bloomberg")
+            if len(news.get('content', '')) < 200 and not skip_fulltext:
                 tasks.append(self._fill_content(news, sem))
             else:
                 final_news.append(news)
@@ -120,14 +140,83 @@ class AdvancedNewsCollector:
 
         return results
 
+    async def _collect_from_newsapi(self) -> List[Dict[str, Any]]:
+        results = []
+        if not self.newsapi_key:
+            return results
+
+        query_terms = [
+            "china OR chinese",
+            "federal reserve OR fed OR inflation",
+            "semiconductor OR chip OR ai",
+            "oil OR gold OR copper",
+            "banking OR property OR liquidity",
+        ]
+        query = " OR ".join(query_terms)
+
+        params = {
+            "q": query,
+            "language": "en",
+            "sortBy": "publishedAt",
+            "pageSize": 20,
+            "apiKey": self.newsapi_key,
+        }
+
+        session = await self._get_session()
+        try:
+            async with session.get("https://newsapi.org/v2/everything", params=params, timeout=15) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    for item in data.get("articles", [])[:20]:
+                        published_dt = datetime.now()
+                        if item.get("publishedAt"):
+                            try:
+                                published_dt = datetime.fromisoformat(item["publishedAt"].replace("Z", "+00:00"))
+                            except Exception:
+                                published_dt = datetime.now()
+                        results.append({
+                            "source": "newsapi",
+                            "title": item.get("title", ""),
+                            "url": item.get("url", ""),
+                            "content": item.get("description", "") or "",
+                            "published": published_dt.isoformat(),
+                            "published_ts": published_dt.timestamp(),
+                        })
+        except Exception as e:
+            logger.warning(f"NewsAPI fetch failed: {e}")
+
+        return results
+
     async def _collect_from_rss(self) -> List[Dict[str, Any]]:
         all_news = []
+        reuters_html_map = {
+            "reuters_world": "https://www.reuters.com/world/",
+            "reuters_business": "https://www.reuters.com/business/",
+            "reuters_markets": "https://www.reuters.com/markets/",
+            "reuters_technology": "https://www.reuters.com/technology/",
+            "reuters_legal": "https://www.reuters.com/legal/",
+        }
         for source, url in self.rss_sources.items():
             try:
                 feed = await self._parse_feed(url)
-                for entry in feed.entries[:5]:
+                if source.startswith("reuters_") and getattr(feed, "bozo", False):
+                    logger.warning(f"RSS parse error: {source} | {getattr(feed, 'bozo_exception', None)}")
+                logger.info(f"RSS parsed: {source} | entries={len(getattr(feed, 'entries', []) or [])}")
+                if source.startswith("reuters_") and not getattr(feed, "entries", []):
+                    html_url = reuters_html_map.get(source)
+                    if html_url:
+                        all_news.extend(await self._collect_reuters_html(html_url, source))
+                    continue
+                for entry in feed.entries[:10]:
                     is_hit = self._check_relevance(entry.title, entry.get('summary', ''))
-                    if is_hit:
+                    is_high_quality = (
+                        source.startswith("ft_")
+                        or source.startswith("reuters_")
+                        or source.startswith("wsj_")
+                        or source.startswith("economist_")
+                        or source == "bloomberg"
+                    )
+                    if is_hit or is_high_quality:
                         published_dt = self._extract_published(entry)
                         all_news.append({
                             'source': f"rss_{source}",
@@ -140,6 +229,77 @@ class AdvancedNewsCollector:
             except Exception as e:
                 logger.error(f"RSS {source} 失败: {e}")
         return all_news
+
+    async def _collect_reuters_html(self, category_url: str, source: str) -> List[Dict[str, Any]]:
+        browserless_ws = os.getenv("BROWSERLESS_WS")
+        if not browserless_ws:
+            logger.warning(f"Reuters HTML skipped (no BROWSERLESS_WS): {category_url}")
+            return []
+
+        try:
+            from playwright.async_api import async_playwright
+        except Exception as e:
+            logger.warning(f"Playwright unavailable: {e}")
+            return []
+
+        results: List[Dict[str, Any]] = []
+        try:
+            async with async_playwright() as p:
+                browser = await p.chromium.connect_over_cdp(browserless_ws)
+                context = browser.contexts[0] if browser.contexts else await browser.new_context(
+                    user_agent=(
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/120.0.0.0 Safari/537.36"
+                    ),
+                    locale="en-US",
+                    viewport={"width": 1920, "height": 1080},
+                )
+                page = await context.new_page()
+                await page.goto(category_url, wait_until="networkidle", timeout=60000)
+                try:
+                    await page.wait_for_selector('[data-testid="Heading"]', timeout=20000)
+                except Exception:
+                    logger.warning(f"Reuters HTML wait timeout: {category_url}")
+                await page.mouse.wheel(0, 2000)
+                await asyncio.sleep(2)
+                html = await page.content()
+                await page.close()
+                await browser.close()
+
+            if not html:
+                logger.warning(f"Reuters HTML empty: {category_url}")
+                return results
+
+            soup = BeautifulSoup(html, "html.parser")
+            headings = soup.find_all(attrs={"data-testid": "Heading"})
+            for h in headings:
+                if len(results) >= 10:
+                    break
+                link_tag = h.find("a") if h.name != "a" else h
+                if not link_tag:
+                    link_tag = h.find_parent("a")
+                if not link_tag:
+                    continue
+                title = link_tag.get_text().strip()
+                href = link_tag.get("href")
+                if not title or not href:
+                    continue
+                if href.startswith("/"):
+                    href = "https://www.reuters.com" + href
+                results.append({
+                    "source": f"reuters_html_{source}",
+                    "title": title,
+                    "url": href,
+                    "content": "",
+                    "published": datetime.now().isoformat(),
+                    "published_ts": datetime.now().timestamp(),
+                })
+            logger.info(f"Reuters HTML parsed: {source} | items={len(results)}")
+            return results
+        except Exception as e:
+            logger.warning(f"Reuters HTML exception: {e} | {category_url}")
+            return results
 
     async def _fetch_content_no_browser(self, url: str) -> str:
         """🚀 纯代码抓取，不依赖 Chrome"""
@@ -199,8 +359,60 @@ class AdvancedNewsCollector:
             await self._session.close()
 
     async def _parse_feed(self, url: str):
+        if "reuters.com" in url:
+            fetched = await self._fetch_feed_with_fallback(url)
+            if fetched:
+                return feedparser.parse(fetched)
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, feedparser.parse, url)
+
+    async def _fetch_feed_with_fallback(self, url: str) -> str:
+        session = await self._get_session()
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/122.0.0.0 Safari/537.36"
+            ),
+            "Accept": "application/rss+xml, application/xml;q=0.9, text/xml;q=0.8, */*;q=0.5",
+        }
+
+        browserless_ws = os.getenv("BROWSERLESS_WS")
+        if browserless_ws and "reuters.com" in url:
+            try:
+                from playwright.async_api import async_playwright
+            except Exception as e:
+                logger.warning(f"Playwright unavailable: {e}")
+            else:
+                try:
+                    async with async_playwright() as p:
+                        browser = await p.chromium.connect_over_cdp(browserless_ws)
+                        context = browser.contexts[0] if browser.contexts else await browser.new_context()
+                        page = await context.new_page()
+                        await page.goto(url, wait_until="networkidle", timeout=15000)
+                        content = await page.content()
+                        await page.close()
+                        await browser.close()
+
+                    if content:
+                        if "<rss" in content or "<feed" in content:
+                            logger.info(f"Browserless response ok: {url} | size={len(content)}")
+                            return content
+                        logger.warning(f"Browserless non-RSS response: {url} | size={len(content)}")
+                    else:
+                        logger.warning(f"Browserless empty response: {url}")
+                except Exception as e:
+                    logger.warning(f"Browserless exception: {e} | {url}")
+
+        try:
+            async with session.get(url, headers=headers, timeout=15) as response:
+                if response.status == 200:
+                    return await response.text()
+                logger.warning(f"Reuters fetch failed: {response.status} | {url}")
+        except Exception as e:
+            logger.warning(f"Reuters fetch exception: {e} | {url}")
+
+        return ""
 
     def _extract_published(self, entry) -> datetime:
         for key in ("published_parsed", "updated_parsed"):

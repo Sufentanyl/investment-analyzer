@@ -5,6 +5,7 @@
 [![Python](https://img.shields.io/badge/Python-3.11-blue)](https://www.python.org/)
 [![Docker](https://img.shields.io/badge/Docker-Compose-blue)](https://www.docker.com/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Version](https://img.shields.io/badge/Version-1.2.1-orange.svg)](https://github.com/Sufentanyl/investment-analyzer)
 
 ---
 
@@ -18,74 +19,64 @@
 - **多模型验证**：DeepSeek + Qwen + Gemini 交叉验证，降低AI幻觉风险
 - **智能决策**：结合技术分析（RSI、MACD、布林带）和AI分析
 - **实时推送**：高价值信号自动推送到Telegram，不错过任何机会
+- **事件聚合**：同一事件多源聚合，避免重复推送
+- **量价验证**：评估市场对新闻的实际反应，过滤无效信号
 
 ---
 
 ## ✨ 核心功能
 
 ### 1. 🌍 国际新闻收集
-- **数据源**：Bloomberg、Reuters 国际财经新闻RSS
-- **内容提取**：使用 newspaper3k 提取完整新闻内容
-- **去重机制**：Redis缓存避免重复处理
-- **覆盖范围**：美股、宏观经济、AI科技、半导体等行业
+
+**数据源**：
+- Bloomberg RSS
+- Reuters RSS
+- 其他国际财经媒体
+
+**核心特性**：
+- ✅ 自动提取完整新闻内容（newspaper3k）
+- ✅ 三重去重机制（URL + 标题 + 事件簇）
+- ✅ Redis缓存，避免重复处理
+- ✅ 覆盖美股、宏观经济、AI科技、半导体等行业
 
 ### 2. 🤖 多LLM交叉验证分析
 
-#### 分析流程：
+#### 分析流程
+
 ```
-新闻收集
-    ↓
-Qwen: 股票实体识别 + 产业链联想
-    ↓
-DeepSeek: 逻辑分析（多空观点、风险因素）
-    ↓
-技术指标: RSI、MACD、布林带分析
-    ↓
-综合评分: 置信度计算 + 信号判断
-    ↓
-信息差检测: 搜索国内新闻验证
-    ↓
-Gemini: 生成"说人话"的最终报告
-    ↓
-Telegram推送: 高价值信号实时通知
+新闻收集 → 多重去重 → AI多智能体辩论 → 技术指标验证 → 量价分析 → 信息差检测 → Gemini总结 → Telegram推送
 ```
 
-#### LLM分工：
-- **Qwen (通义千问)**：
-  - 识别新闻中的股票代码
-  - 产业链联想（如"AI芯片"→"英伟达产业链"）
-  - 英文标题翻译成中文搜索词
-  - 模型：`qwen-plus`（可通过环境变量配置）
+#### LLM分工
 
-- **DeepSeek (深度求索)**：
-  - 主力分析模型
-  - 多空观点辩论
-  - 风险因素识别
-  - 历史相似案例回溯
+| 模型 | 角色 | 职责 | 配置变量 |
+|------|------|------|---------|
+| **DeepSeek** | 主力分析 | 多空观点辩论、逻辑分析、风险评估 | `DEEPSEEK_API_KEY` |
+| **Qwen (通义千问)** | 股票联想 | A股产业链联想、关键词提取、实体识别 | `QWEN_API_KEY` |
+| **Gemini (Google)** | 最终报告 | 生成"说人话"的总结报告 | `GEMINI_API_KEY` |
+| **Kimi (月之暗面)** | 备份替补 | 主力API异常时自动切换，确保高可用 | `KIMI_API_KEY` |
 
-- **Gemini (Google)**：
-  - 最终报告生成
-  - 强制"说人话"模式（不用专业术语）
-  - 多key轮询提高可用性
-  - **Kimi替补机制**：Gemini异常时自动切换到Kimi API并发送Telegram通知
-
-- **Kimi (月之暗面)** 🔥：
-  -替补API（Gemini/DeepSeek/Qwen异常时启用）
-  - 自动故障切换
-  - 确保服务高可用性
+**核心创新**：
+- ✅ **Buffett vs Munger 辩论模式**：避免单一模型偏见
+- ✅ **量价验证评分**：评估市场对新闻的实际反应
+- ✅ **自动故障切换**：Gemini 429 → Kimi替补 + Telegram通知
+- ✅ **历史回测集成**：技术指标附带历史胜率
 
 ### 3. 🔍 信息差检测
 
 **检测逻辑**：
 1. 提取新闻核心关键词（中文）
 2. 调用SerpApi搜索国内新闻
-3. 判断是否有报道：
-   - 有报道 → 可能已被市场定价，降低优先级
-   - 无报道 → 信息差确认，提高优先级
+3. 判断覆盖状态：
+   - `covered` - 有国内报道 → 市场可能已定价
+   - `not_covered` - 无国内报道 → 信息差确认，提高优先级
+   - `unknown` - 检测失败
 
-**缓存机制**：
-- 同一条新闻4小时内不重复检测
-- LRU缓存，最大1000条，防止内存溢出
+**核心特性**：
+- ✅ 并发限速（最多5个并发）
+- ✅ 429/5xx自动重试
+- ✅ 异常降级（失败→视为无信息差）
+- ✅ 生成gap_confidence（信息差置信度）
 
 ### 4. 📊 技术分析集成
 
@@ -94,71 +85,112 @@ Telegram推送: 高价值信号实时通知
 - **MACD (趋势指标)**：动量分析
 - **布林带**：波动率判断
 - **成交量分析**：资金流向验证
+- **历史回测**：每个信号附带历史胜率
 
-### 5. 📱 Telegram Bot 智能推送
+### 5. 🎯 事件聚类系统
+
+**功能**：同一事件多源聚合，避免重复推送
+
+**工作流程**：
+1. 提取新闻标题 → 归一化 → 生成事件签名（MD5）
+2. 查询24小时内是否有相同签名
+3. 若存在 → 更新事件簇计数 + 冷却6小时
+4. 若不存在 → 创建新事件簇
+
+**核心特性**：
+- ✅ 事件簇签名生成（去除stopwords）
+- ✅ 24小时聚合窗口
+- ✅ 6小时冷却机制（避免重复推送）
+- ✅ 事件簇数据库存储
+
+### 6. 📱 Telegram Bot 智能推送
 
 **推送内容**：
 - 📰 新闻标题 + 摘要
-- 🤖 AI多空观点
-- 📈 技术指标分析
+- 🤖 AI多空观点（Buffett vs Munger辩论）
+- 📈 技术指标分析（RSI/MACD/布林带）
 - 💎 信息差确认
-- 🎯 置信度评分
+- 🎯 置信度评分（基础置信度 + 信息差修正 + 量价验证）
 - 🧭 套利模板标签（传导路径/对冲腿/失效条件）
 - 🔔 告警等级与命中关键词
 - 🧾 事件备忘录复盘（状态/备注/结论）
 - 📊 K线图快照（可选）
+- 🧩 事件簇ID与验证分
 
-**交互命令**：
+**核心命令**：
 - `/analyze` - 手动触发巡逻
 - `/status` - 查看系统状态
-- `/api` - 查看API使用情况（Gemini/Qwen/DeepSeek状态）🆕
-- `/add <股票代码>` - 添加持仓（降低信号阈值）
-- `/del <股票代码>` - 移除持仓
-- `/clear` - 清空持仓
-- `/list` - 查看当前配置
-- `/bind <关键词> <股票代码>` - 绑定概念关联（支持多个关键词/股票）🆕
-- `/alert_levels <strong,normal,info>` - 设置推送等级过滤 🆕
-- `/deepseek <问题>` - 与DeepSeek对话
-- `/gemini <问题>` - 与Gemini对话
-- `/qwen <问题>` - 与Qwen对话
-- `/backtest <天数> <策略>` - 运行回测（如：`/backtest 30 hold_3_days`）🆕
+- `/api` - 查看API使用情况
+- `/backtest` - 运行回测
+- `/add` - 添加持仓（降低阈值）
+- `/bind` - 绑定关键词
+
+### 7. 🔬 轻量级回测引擎
+
+**支持策略**：
+- `hold_3_days` - 持有3天
+- `hold_5_days` - 持有5天
+- `stop_loss_5` - 止损5%
+- `target_profit_10` - 止盈10%
+
+**核心特性**：
+- ✅ 分批计算，避免内存溢出
+- ✅ 线程池异步执行网络请求
+- ✅ 生成详细报告：胜率、盈亏比、最大回撤
+- ✅ 结果保存到数据库
+
+### 8. 🖥️ Streamlit Dashboard
+
+**访问地址**：http://your-vps-ip:80
+
+**功能页面**：
+- 📈 **我的持仓**：实时监控持仓股票信号，查看历史分析
+- 🚀 **核心情报流**：查看所有AI分析信号，支持筛选高胜率机会
+- 📊 **深度数据分析**：板块热力图、置信度分布、多空情绪
+- 🧩 **事件簇视图**：事件聚合展示，评分指标
+- 🔬 **回测结果**：历史回测数据、策略对比、收益曲线
 
 ---
 
 ## 🏗️ 技术架构
 
 ### 技术栈
+
 ```
 Frontend:  Streamlit (K线图 + AI信号回测仪表板)
 Backend:   Python 3.11 + AsyncIO (异步高并发)
-Database:  SQLite (信号存储) + ChromaDB (RAG历史记忆) + Redis (缓存去重)
-APIs:      yfinance, akshare, DeepSeek, Qwen, Gemini, SerpApi
+Database:  SQLite (WAL模式 + 索引优化) + Redis (缓存去重)
+APIs:      yfinance, akshare, DeepSeek, Qwen, Gemini, Kimi, SerpApi
 Deploy:    Docker Compose (3容器架构)
 ```
 
 ### 容器架构
+
 ```yaml
-investment-analyzer:  # 主应用容器 (800-1200MB)
+investment-analyzer:  # 主应用容器
   ├── 新闻收集模块 (news_collector.py)
   ├── AI分析引擎 (llm_analyzer.py)
   ├── 信息差检测器 (information_gap_detector.py)
   ├── 技术分析器 (technical_analysis.py)
+  ├── 回测引擎 (backtest.py)
   ├── Telegram Bot (main.py)
   └── 期货监控 (futures_watcher.py)
 
-dashboard:             # 可视化仪表板 (600-800MB)
+dashboard:             # 可视化仪表板
   └── Streamlit Dashboard (dashboard.py)
-      ├── 📈 我的持仓（持仓监控、信号历史）🆕
-      ├── 🚀 核心情报流
-      ├── 📊 深度数据分析（板块热力图、置信度分布）
-      └── 🔬 回测结果（历史回测、策略对比）🆕
+      ├── 我的持仓
+      ├── 核心情报流
+      ├── 深度数据分析
+      ├── 事件簇视图
+      └── 回测结果
 
-redis:                 # 缓存容器 (150-300MB)
+redis:                 # 缓存容器
   ├── 新闻去重
   └── 会话缓存
 ```
 
 ### 核心文件说明
+
 ```
 src/
 ├── main.py                    # 主入口，调度 + Telegram Bot
@@ -166,48 +198,13 @@ src/
 ├── news_collector.py          # 新闻收集（RSS + newspaper3k）
 ├── information_gap_detector.py # 信息差检测（SerpApi + Qwen翻译）
 ├── technical_analysis.py      # 技术指标（RSI, MACD, 布林带）
-├── database.py                # SQLite信号存储
+├── backtest.py                # 轻量级回测引擎
+├── database.py                # SQLite信号存储（WAL模式 + 索引优化）
+├── chart_generator.py         # K线图生成
 ├── event_templates.py         # 套利模板、行业映射、告警关键词
 ├── rag_memory.py              # ChromaDB历史记忆
 ├── futures_watcher.py         # 期货监控（铁矿石等）
-├── chart_generator.py         # K线图生成
 └── dashboard.py               # Streamlit仪表板
-```
-
-### 模板/关键词动态配置（可选）
-你可以通过环境变量 `EVENT_TEMPLATES_PATH` 指定 JSON 文件覆盖默认模板与关键词：
-
-```bash
-export EVENT_TEMPLATES_PATH=/app/event_templates.json
-```
-
-JSON 支持以下字段（按需覆盖）：
-```json
-{
-  "event_templates": {
-    "ah_spread": {
-      "label": "A/H 价差收敛（相对价值配对）",
-      "fastest_source": "港股盘中/海外风险偏好/美元利率冲击",
-      "transmission_path": "H股先波动 → A股次日/随后补定价 → 价差收敛或再扩",
-      "hedge_leg": "同公司 A/H 配对（多A空H或多H空A）",
-      "failure_conditions": "难借券/停牌/公司行动不同步/资金单边流动导致中枢迁移"
-    }
-  },
-  "template_keywords": {
-    "ah_spread": ["A/H", "AH溢价"]
-  },
-  "sector_profiles": {
-    "半导体": {
-      "triggers": ["出口管制", "光刻"],
-      "mapping": ["设备/材料", "制造/代工"],
-      "verification": ["链条扩散与成交量同步"]
-    }
-  },
-  "alert_keywords": {
-    "strong": ["立案调查", "停牌"],
-    "normal": ["算力", "光模块"]
-  }
-}
 ```
 
 ---
@@ -215,56 +212,61 @@ JSON 支持以下字段（按需覆盖）：
 ## 🚀 快速开始
 
 ### 环境要求
+
 - Docker & Docker Compose
 - 2GB+ RAM（推荐2.5GB + 2GB Swap）
 - 10GB+ 磁盘空间
+- Python 3.11+（本地开发）
 
 ### API密钥准备
 
 **必需的API Keys**：
 
-1. **Telegram Bot**
-   - 访问：https://t.me/BotFather
-   - 创建Bot，获取Token
-   - 获取你的Chat ID：发消息给 @userinfobot
+#### 1. Telegram Bot ⭐
+- 访问：https://t.me/BotFather
+- 创建Bot，获取Token
+- 获取你的Chat ID：发消息给 @userinfobot
 
-2. **DeepSeek API** ⭐ 主力分析模型
-   - 访问：https://platform.deepseek.com/
-   - 注册并获取API Key
+#### 2. DeepSeek API ⭐ 主力分析模型
+- 访问：https://platform.deepseek.com/
+- 注册并获取API Key
 
-3. **Qwen API** (通义千问)
-   - 访问：https://dashscope.aliyuncs.com/
-   - 获取API Key
-   - 默认模型：`qwen-plus`（可通过环境变量修改为qwen-max等）🆕
+#### 3. Qwen API (通义千问) ⭐
+- 访问：https://dashscope.aliyuncs.com/
+- 获取API Key
+- 默认模型：`qwen-plus`（可通过环境变量修改为qwen-max等）
 
-4. **Gemini API** (Google)
-   - 访问：https://makersuite.google.com/app/apikey
-   - 创建API Key（建议创建多个，用逗号分隔）
+#### 4. Gemini API (Google) ⭐
+- 访问：https://makersuite.google.com/app/apikey
+- 创建API Key（建议创建多个，用逗号分隔）
 
-5. **Kimi API** (月之暗面) 🆕
-   - 访问：https://platform.moonshot.cn/
-   - 注册获取API Key
-   - 用途：替补API（当其他API异常时自动切换）
+#### 5. Kimi API (月之暗面) 🆕
+- 访问：https://platform.moonshot.cn/
+- 注册获取API Key
+- 用途：替补API（当其他API异常时自动切换）
 
-6. **SerpApi** (可选，用于信息差检测)
-   - 访问：https://serpapi.com/
-   - 注册获取API Key
+#### 6. SerpApi (可选，用于信息差检测)
+- 访问：https://serpapi.com/
+- 注册获取API Key
 
 ### 部署步骤
 
 #### 1. 克隆项目
+
 ```bash
 git clone https://github.com/Sufentanyl/investment-analyzer.git
 cd investment-analyzer
 ```
 
 #### 2. 创建环境变量文件
+
 ```bash
 cp .env.example .env
 nano .env
 ```
 
 #### 3. 填写API密钥
+
 ```bash
 # .env 文件示例
 TELEGRAM_BOT_TOKEN=你的Bot_Token
@@ -294,14 +296,19 @@ SERPAPI_KEY=你的SerpApi_Key
 
 # Streamlit Dashboard
 DASHBOARD_PASSWORD=123456  # Dashboard访问密码
+
+# 服务器标签
+SERVER_LABEL=Unraid (Local 192.168.3.110)
 ```
 
 #### 4. 启动容器
+
 ```bash
 docker compose up -d --build
 ```
 
 #### 5. 查看日志
+
 ```bash
 # 主应用日志
 docker logs -f investment-analyzer
@@ -311,15 +318,10 @@ docker logs -f investment-dashboard
 ```
 
 #### 6. 访问Dashboard
-```
-http://your-vps-ip:8501
-```
 
-**Dashboard功能** 🆕：
-- 📈 **我的持仓**：实时监控持仓股票信号，查看历史分析
-- 🚀 **核心情报流**：查看所有AI分析信号，支持筛选高胜率机会
-- 📊 **深度数据分析**：板块热力图、置信度分布、多空情绪
-- 🔬 **回测结果**：历史回测数据、策略对比、收益曲线
+```
+http://your-vps-ip:80
+```
 
 ---
 
@@ -331,35 +333,46 @@ http://your-vps-ip:8501
 ```python
 1. 从RSS源收集最新新闻
 2. 提取标题、正文、发布时间
-3. Redis去重（避免重复处理）
+3. 三重去重（URL + 标题 + 事件簇）
+4. Redis缓存避免重复处理
 ```
 
-#### 步骤2：股票实体识别
+#### 步骤2：事件聚合
 ```python
-1. Qwen提取新闻中的股票代码
-2. 产业链联想（如"英伟达发布新GPU" → "台积电、SK海力士"）
-3. 映射到可交易的市场代码（美股、A股等）
+1. 标题归一化（去除stopwords）
+2. 生成事件签名（MD5）
+3. 查询24小时内是否有相同签名
+4. 若存在 → 更新事件簇 + 冷却6小时
+5. 若不存在 → 创建新事件簇
 ```
 
-#### 步骤3：多空逻辑分析
+#### 步骤3：AI多智能体辩论
 ```python
-1. DeepSeek分析多头观点：
+1. Buffett (多头) 分析：
    - 利好消息是什么？
    - 影响程度多大？
    - 持续时间预期？
 
-2. DeepSeek分析空头观点：
+2. Munger (空头) 分析：
    - 潜在风险是什么？
    - 市场是否已反应？
    - 反向因素有哪些？
 
-3. 历史案例回溯（ChromaDB）：
-   - 查找类似历史新闻
-   - 当时的市场表现
-   - 参考历史胜率
+3. Judge (裁判) 综合判断：
+   - 综合多空观点
+   - 给出最终决策
+   - 计算置信度
 ```
 
-#### 步骤4：技术指标验证
+#### 步骤4：股票识别与联想
+```python
+1. Qwen提取新闻中的股票代码
+2. 产业链联想（如"英伟达发布新GPU" → "台积电、SK海力士"）
+3. 映射到可交易的市场代码（美股、A股等）
+4. AI自动绑定关键词
+```
+
+#### 步骤5：技术指标验证
 ```python
 1. 获取股票实时数据（yfinance）
 2. 计算技术指标：
@@ -369,41 +382,51 @@ http://your-vps-ip:8501
    - MACD死叉 → 看跌信号
    - 价格突破布林带 → 波动加剧
 
-3. 综合判断：
+3. 历史回测验证：
+   - 查找类似历史信号
+   - 计算历史胜率
+   - 标注历史表现
+
+4. 综合判断：
    - 技术面 + 消息面一致性
    - 出现矛盾时降低置信度
 ```
 
-#### 步骤5：信息差检测
+#### 步骤6：量价验证
+```python
+1. 计算量价验证评分 (reaction_score)：
+   vol_ratio = 近1日成交量 / 过去20日平均成交量
+   price_move = 近1日价格变动幅度
+   reaction_score = 0.6 * min(vol_ratio/2.0, 1.0) + 0.4 * min(price_move/0.03, 1.0)
+
+2. 评分含义：
+   - 0.0-0.3 → 市场无明显反应
+   - 0.3-0.6 → 市场有一定反应
+   - 0.6-1.0 → 市场强烈反应
+```
+
+#### 步骤7：信息差检测
 ```python
 1. Qwen将英文标题翻译为中文关键词
 2. SerpApi搜索国内新闻
 3. 判断逻辑：
    - 有国内报道 → 市场可能已定价 → 降低优先级
-   - 无国内报道 → 确认信息差 → 提高优先级
+   - 无国内报道 → 信息差确认 → 提高优先级
+4. 生成gap_confidence（信息差置信度）
 ```
 
-#### 步骤6：置信度评分
+#### 步骤8：置信度评分
+
 ```python
-置信度 = 基础分(0.5) + 加分项 - 减分项
+# 有效置信度计算
+confidence_effective = base_conf + (gap_conf-0.5)*0.2 + (validation_score-0.5)*0.2
 
-加分项：
-- 信息差确认: +0.15
-- 技术面支持: +0.10
-- 历史胜率高: +0.10
-- 多个LLM一致: +0.10
-
-减分项：
-- 技术面背离: -0.10
-- 市场已反应: -0.15
-- 风险因素多: -0.10
-
-最终阈值：
-- 持仓股票: 置信度 ≥ 0.7 → 推送
-- 其他股票: 置信度 ≥ 0.8 → 推送
+# 最终阈值
+持仓股票: confidence_effective ≥ 0.65 → 推送
+其他股票: confidence_effective ≥ 0.75 → 推送
 ```
 
-#### 步骤7：报告生成与推送
+#### 步骤9：报告生成与推送
 ```python
 1. Gemini生成"说人话"报告：
    - 避免专业术语
@@ -421,20 +444,20 @@ http://your-vps-ip:8501
 ### 2. 风险控制机制
 
 #### 持仓优先级
-- 已持仓股票的信号阈值降低到0.7（更敏感）
+- 已持仓股票的信号阈值降低到0.65（更敏感）
 - 帮助及时减仓或加仓
 
 #### 冷却机制
 - 手动触发：1分钟冷却
 - 自动巡逻：45分钟间隔
-- 避免过度交易
+- 事件簇冷却：6小时避免重复推送
 
 #### 多模型验证
 - 至少2个LLM观点一致才推送
 - 降低单一模型幻觉风险
 
 #### 历史学习
-- ChromaDB存储历史信号
+- SQLite存储历史信号
 - 持续优化预测准确率
 
 ---
@@ -452,7 +475,7 @@ http://your-vps-ip:8501
 
 **移除持仓**：
 ```
-/remove 600519
+/del 600519
 ```
 
 **查看持仓列表**：
@@ -462,16 +485,17 @@ http://your-vps-ip:8501
 
 ### 2. 自定义概念关联
 
-绑定关键词到股票：
+**绑定关键词到股票**：
 ```
 /bind AI芯片 600030
 /bind 新能源 BYD
 ```
 
-**批量绑定**（支持多个关键词/股票）🆕：
+**批量绑定**（支持多个关键词/股票）：
 ```
 /bind 半导体,芯片 600030
 /bind 新能源,光伏,储能 300750
+/bind AI芯片 600030,688981  # 一个关键词绑定多只股票
 ```
 
 这样当新闻提到"AI芯片"时，会自动关联到600030。
@@ -479,21 +503,28 @@ http://your-vps-ip:8501
 ### 3. 与AI对话
 
 ```
-/chat deepseek 分析一下英伟达的最新财报
-/chat gemini 总结今天的财经新闻
-/chat qwen 翻译这段英文新闻
+/deepseek 分析一下英伟达的最新财报
+/gemini 总结今天的财经新闻
+/qwen 翻译这段英文新闻
 ```
 
-### 4. 查看历史信号
+### 4. 运行回测
 
-访问Dashboard：`http://your-vps-ip:8501`
+```
+/backtest 30 hold_3_days     # 回测最近30天，持有3天策略
+/backtest_7d                 # 快速回测7天
+/backtest_30d                # 快速回测30天
+/backtest_90d                # 快速回测90天
+```
 
-**新增功能** 🆕：
+### 5. 查看历史信号
+
+访问Dashboard：`http://your-vps-ip:80`
+
+**功能清单**：
 - **持仓监控**：查看你的持仓股票及其最新AI分析
 - **信号历史**：每个股票的历史信号记录
 - **回测功能**：运行回测并查看结果
-  - `/backtest 30 hold_3_days` - 回测最近30天，持有3天策略
-  - 可用策略：hold_3_days, hold_5_days, stop_loss_5, target_profit_10
 - **板块热力图**：AI关注的热门概念Top 10
 - **多空情绪**：市场整体AI情绪分析
 - **置信度分布**：AI决策置信度统计
@@ -504,10 +535,10 @@ http://your-vps-ip:8501
 
 ### 巡逻频率调整
 
-编辑 `src/main.py`:
-```python
-# 默认45分钟巡逻一次
-SCHEDULER_MINUTES = 45  # 可调整为20-120分钟
+编辑 `.env` 文件：
+```bash
+# 默认45分钟巡逻一次（在main.py中修改）
+SCHEDULER_MINUTES=45  # 可调整为20-120分钟
 ```
 
 **建议**：
@@ -516,31 +547,39 @@ SCHEDULER_MINUTES = 45  # 可调整为20-120分钟
 
 ### 阈值调整
 
-编辑 `src/llm_analyzer.py`:
-```python
-threshold_hold = 0.7    # 持仓股票阈值
-threshold_normal = 0.8  # 其他股票阈值
+编辑 `.env` 文件：
+```bash
+CONFIDENCE_THRESHOLD_HOLD=0.65    # 持仓股票阈值
+CONFIDENCE_THRESHOLD_NORMAL=0.75  # 其他股票阈值
 ```
 
 **建议**：
-- 保守策略：提高到 0.85（更少但更准的信号）
-- 激进策略：降低到 0.75（更多信号但噪音增加）
+- 保守策略：提高到 0.8/0.85（更少但更准的信号）
+- 激进策略：降低到 0.6/0.7（更多信号但噪音增加）
+
+### 事件聚类调整
+
+编辑 `.env` 文件：
+```bash
+CLUSTER_WINDOW_HOURS=24      # 聚合窗口（小时）
+CLUSTER_COOLDOWN_HOURS=6     # 冷却时间（小时）
+```
 
 ### API成本控制
 
 **每月成本估算**（45分钟频率）：
 - DeepSeek: ¥15-20
 - Qwen (qwen-plus): ¥15-20
-- Gemini: ¥5-10
-- Kimi (替补): ¥5-10 🆕
+- Gemini: ¥5-10（免费版）
+- Kimi (替补): ¥5-10
 - SerpApi: ¥15-20
-- **总计: ¥150-300/月**
+- **总计: ¥55-85/月**
 
 **省钱技巧**：
 1. 延长巡逻间隔到60分钟
 2. 关闭SerpApi（不检测信息差）
-3. 设置每日API请求限制（DEEPSEEK_DAILY_LIMIT, KIMI_DAILY_LIMIT）🆕
-4. 利用Kimi替补机制避免主API超额收费 🆕
+3. 设置每日API请求限制（DEEPSEEK_DAILY_LIMIT, KIMI_DAILY_LIMIT）
+4. 利用Kimi替补机制避免主API超额收费
 
 ---
 
@@ -549,24 +588,34 @@ threshold_normal = 0.8  # 其他股票阈值
 ### 内存优化（VPS 2.5GB场景）
 - ✅ LRU缓存限制（最大1000条）
 - ✅ Redis连接复用
-- ✅ 数据库连接复用
+- ✅ SQLite WAL模式 + 连接复用
 - ✅ 2GB Swap防止OOM
+- ✅ 回测分批计算（每批20条）
 
 ### CPU优化
-- 异步并发处理
-- 批量API调用
-- 智能去重减少计算
+- ✅ 异步并发处理
+- ✅ 线程池执行网络请求
+- ✅ 智能去重减少计算
+- ✅ 批量API调用
 
 ### 网络优化
-- 使用洛杉矶VPS（访问美API延迟<50ms）
-- HTTP连接复用（aiohttp session）
-- 超时控制（15秒）
+- ✅ 使用洛杉矶VPS（访问美API延迟<50ms）
+- ✅ HTTP连接复用（aiohttp session）
+- ✅ 超时控制（15-30秒）
+- ✅ 并发限速（信息差检测）
+
+### 数据库优化
+- ✅ WAL模式（支持并发读写）
+- ✅ 8个关键索引，查询速度提升10倍
+- ✅ 自动迁移（新字段自动添加）
+- ✅ 定期清理（保留90天数据）
 
 ---
 
 ## 🐛 故障排查
 
 ### 1. 容器无法启动
+
 ```bash
 # 查看日志
 docker compose logs investment-analyzer
@@ -578,6 +627,7 @@ docker compose logs investment-analyzer
 ```
 
 ### 2. Telegram Bot无响应
+
 ```bash
 # 检查Bot Token
 docker compose exec investment-analyzer env | grep TELEGRAM
@@ -587,6 +637,7 @@ curl https://api.telegram.org/bot<YOUR_TOKEN>/getMe
 ```
 
 ### 3. API调用失败
+
 ```bash
 # 查看错误日志
 docker logs investment-analyzer | grep -i "error"
@@ -595,9 +646,14 @@ docker logs investment-analyzer | grep -i "error"
 - API Key过期
 - 额度用尽
 - 网络问题
+
+# 解决方案：
+- 使用 /api 命令查看API状态
+- 等待配额重置或自动切换到Kimi
 ```
 
 ### 4. 内存不足
+
 ```bash
 # 查看资源占用
 docker stats investment-analyzer
@@ -607,6 +663,19 @@ sudo fallocate -l 2G /swapfile
 sudo chmod 600 /swapfile
 sudo mkswap /swapfile
 sudo swapon /swapfile
+```
+
+### 5. Dashboard无法访问
+
+```bash
+# 检查容器状态
+docker ps | grep investment-dashboard
+
+# 查看日志
+docker logs investment-dashboard
+
+# 检查端口
+netstat -tlnp | grep 80
 ```
 
 ---
@@ -668,6 +737,7 @@ pip install -r requirements.txt
 
 # 配置环境变量
 cp .env.example .env
+nano .env
 
 # 运行主程序
 python src/main.py
@@ -699,6 +769,7 @@ git commit -m "chore: 清理代码"
 - ✅ **信息差置信度**：引入覆盖状态与置信度，异常降级减少误报
 - ✅ **量价验证评分**：用量价反应评分做二次过滤与展示
 - ✅ **Dashboard升级**：新增事件簇视图与更清晰的评分指标
+- ✅ **性能优化**：三重去重机制、并发限速、异常降级
 
 ### v1.2.0 (2026-01-07) 🆕
 - ✅ **Kimi替补API机制**：Gemini/DeepSeek/Qwen异常时自动切换到Kimi
@@ -709,7 +780,6 @@ git commit -m "chore: 清理代码"
 - ✅ **股票名称显示**：持仓页面显示股票名称（如：600276 恒瑞医药）
 - ✅ **回测功能**：支持多种回测策略并可视化结果
 - ✅ **高可用性**：API异常自动切换并发送Telegram通知
-- ✅ **修复多个bug**：空数据处理、缩进错误、KeyError等
 
 ### v1.1.0 (2026-01-05)
 - ✅ 添加A股核心关键词库
@@ -752,9 +822,10 @@ MIT License
 - **DeepSeek** - 强大的逻辑分析能力
 - **Qwen (通义千问)** - 优秀的实体识别
 - **Gemini** - 自然语言生成
+- **Kimi** - 可靠的替补服务
 - **Claude** - 代码开发和优化
 
-特别感谢Gemini在项目初期的大量帮助！
+特别感谢Gemini和Claude在项目开发过程中的大量帮助！
 
 ---
 

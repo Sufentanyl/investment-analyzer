@@ -87,8 +87,8 @@ class LLMAnalyzer:
         self.config_path = '/app/config.yaml'
         self.config = self._load_yaml_config()
 
-        self.threshold_hold = 0.7
-        self.threshold_normal = 0.8
+        self.threshold_hold = float(os.getenv("CONFIDENCE_THRESHOLD_HOLD", "0.65"))
+        self.threshold_normal = float(os.getenv("CONFIDENCE_THRESHOLD_NORMAL", "0.75"))
 
     def set_telegram_bot(self, bot, chat_id):
         """🔥 新增: 设置Telegram Bot用于发送通知"""
