@@ -711,46 +711,7 @@ def show_main_dashboard():
                     options=sorted(memo_df['sectors'].dropna().unique().tolist()),
                 )
 
-    with tab6:
-        st.subheader("🧩 事件簇聚合")
-        if df.empty or 'event_cluster_id' not in df.columns:
-            st.info("📭 暂无事件簇数据，等待 AI 生成或升级后刷新")
-        else:
-            cluster_df = df.dropna(subset=['event_cluster_id']).copy()
-            cluster_df['event_cluster_id'] = cluster_df['event_cluster_id'].astype(int)
-
-            agg = cluster_df.groupby('event_cluster_id').agg({
-                'news_title': 'first',
-                'created_at': 'max',
-                'confidence': 'mean',
-                'confidence_effective': 'mean' if 'confidence_effective' in cluster_df.columns else 'mean',
-                'gap_confidence': 'mean' if 'gap_confidence' in cluster_df.columns else 'mean',
-                'validation_score': 'mean' if 'validation_score' in cluster_df.columns else 'mean',
-                'stock_code': 'count'
-            }).rename(columns={'stock_code': 'signals'}).reset_index()
-
-            agg = agg.sort_values('created_at', ascending=False).head(100)
-
-            for _, row in agg.iterrows():
-                conf_eff = row['confidence_effective'] if not pd.isna(row.get('confidence_effective')) else row['confidence']
-                with st.expander(f"🧩 #{int(row['event_cluster_id'])} | {row['news_title']}"):
-                    c1, c2, c3, c4 = st.columns(4)
-                    with c1:
-                        st.metric("信号数", int(row['signals']))
-                    with c2:
-                        st.metric("均值置信度", f"{row['confidence']:.2f}")
-                    with c3:
-                        st.metric("有效置信度", f"{conf_eff:.2f}")
-                    with c4:
-                        st.metric("最近时间", row['created_at'].strftime('%m-%d %H:%M'))
-
-                    gap_conf = row.get('gap_confidence') if not pd.isna(row.get('gap_confidence')) else 0
-                    val_score = row.get('validation_score') if not pd.isna(row.get('validation_score')) else 0
-                    st.caption(
-                        f"信息差均值: {gap_conf:.2f} | "
-                        f"量价验证均值: {val_score:.2f}"
-                    )
-
+            # 日期范围筛选
             date_min = memo_df['created_at'].min().date()
             date_max = memo_df['created_at'].max().date()
             date_range = st.date_input(
@@ -791,81 +752,59 @@ def show_main_dashboard():
                 st.download_button(
                     label="📥 下载筛选结果 CSV",
                     data=filtered_df.to_csv(index=False).encode('utf-8'),
-                    file_name="event_memos.csv",
-                    mime="text/csv",
+                    file_name=f'event_memos_{datetime.now().strftime("%Y%m%d")}.csv',
+                    mime='text/csv',
                 )
-                show_table = st.checkbox("显示表格摘要", value=False)
-                if show_table:
-                    display_cols = [
-                        "created_at",
-                        "news_title",
-                        "template_label",
-                        "sectors",
-                        "alert_level",
-                        "alert_keywords",
-                    ]
-                    available_cols = [col for col in display_cols if col in filtered_df.columns]
-                    st.dataframe(
-                        filtered_df[available_cols],
-                        use_container_width=True,
-                        hide_index=True,
+
+                for _, row in filtered_df.head(load_limit).iterrows():
+                    with st.expander(f"📝 {row['news_title']}"):
+                        st.caption(f"🕒 {row['created_at'].strftime('%Y-%m-%d %H:%M')}")
+                        st.markdown(f"**模板**: {row.get('template_label', 'N/A')}")
+                        st.markdown(f"**方向**: {row.get('sectors', 'N/A')}")
+                        st.markdown(f"**等级**: {row.get('alert_level', 'N/A')}")
+                        keywords = row.get('alert_keywords', [])
+                        if keywords and isinstance(keywords, list):
+                            st.markdown(f"**关键词**: {', '.join(keywords)}")
+
+    with tab6:
+        st.subheader("🧩 事件簇聚合")
+        if df.empty or 'event_cluster_id' not in df.columns:
+            st.info("📭 暂无事件簇数据，等待 AI 生成或升级后刷新")
+        else:
+            cluster_df = df.dropna(subset=['event_cluster_id']).copy()
+            cluster_df['event_cluster_id'] = cluster_df['event_cluster_id'].astype(int)
+
+            agg = cluster_df.groupby('event_cluster_id').agg({
+                'news_title': 'first',
+                'created_at': 'max',
+                'confidence': 'mean',
+                'confidence_effective': 'mean' if 'confidence_effective' in cluster_df.columns else 'mean',
+                'gap_confidence': 'mean' if 'gap_confidence' in cluster_df.columns else 'mean',
+                'validation_score': 'mean' if 'validation_score' in cluster_df.columns else 'mean',
+                'stock_code': 'count'
+            }).rename(columns={'stock_code': 'signals'}).reset_index()
+
+            agg = agg.sort_values('created_at', ascending=False).head(100)
+
+            for _, row in agg.iterrows():
+                conf_eff = row['confidence_effective'] if not pd.isna(row.get('confidence_effective')) else row['confidence']
+                with st.expander(f"🧩 #{int(row['event_cluster_id'])} | {row['news_title']}"):
+                    c1, c2, c3, c4 = st.columns(4)
+                    with c1:
+                        st.metric("信号数", int(row['signals']))
+                    with c2:
+                        st.metric("均值置信度", f"{row['confidence']:.2f}")
+                    with c3:
+                        st.metric("有效置信度", f"{conf_eff:.2f}")
+                    with c4:
+                        st.metric("最近时间", row['created_at'].strftime('%m-%d %H:%M'))
+
+                    gap_conf = row.get('gap_confidence') if not pd.isna(row.get('gap_confidence')) else 0
+                    val_score = row.get('validation_score') if not pd.isna(row.get('validation_score')) else 0
+                    st.caption(
+                        f"信息差均值: {gap_conf:.2f} | "
+                        f"量价验证均值: {val_score:.2f}"
                     )
-
-            for _, row in filtered_df.iterrows():
-                timestamp = row['created_at'].strftime('%m-%d %H:%M') if not pd.isna(row['created_at']) else "--"
-                alert_level = row.get('alert_level') or "info"
-                title = row.get('news_title') or "未命名事件"
-                template_label = row.get('template_label') or "未匹配模板"
-                sectors = row.get('sectors') or "未分类"
-                memo_id = row.get('id')
-
-                header = f"[{alert_level.upper()}] {title} ({timestamp})"
-                with st.expander(header):
-                    st.markdown(f"**模板**: {template_label}")
-                    st.markdown(f"**方向**: {sectors}")
-                    st.markdown(f"**传导路径**: {row.get('transmission_path') or '待确认'}")
-                    st.markdown("**五行事件模板**")
-                    st.write(
-                        "\n".join([
-                            f"1) 事件原文: {row.get('news_title') or '待确认'}",
-                            f"2) 先反应市场: {row.get('market_first_reaction') or '待确认'}",
-                            f"3) A股映射池: {row.get('a_share_mapping') or '待确认'}",
-                            f"4) 对冲腿: {row.get('hedge_leg') or '仅A股交易'}",
-                            f"5) 失效条件: {row.get('failure_conditions') or '待确认'}",
-                        ])
-                    )
-                    st.markdown(f"**二次验证**: {row.get('verification') or '量价匹配/板块扩散/关键数据节点'}")
-                    st.markdown(f"**命中关键词**: {row.get('alert_keywords') or '未命中'}")
-
-                    if memo_id is not None:
-                        st.markdown("**复盘记录**")
-                        default_status = row.get('review_status') or "未复盘"
-                        default_notes = row.get('review_notes') or ""
-                        default_outcome = row.get('outcome') or ""
-                        with st.form(key=f"review_form_{memo_id}"):
-                            review_status = st.selectbox(
-                                "复盘状态",
-                                ["未复盘", "验证中", "已验证", "已失效"],
-                                index=["未复盘", "验证中", "已验证", "已失效"].index(default_status)
-                                if default_status in ["未复盘", "验证中", "已验证", "已失效"]
-                                else 0,
-                            )
-                            outcome = st.text_input("结果/结论", value=default_outcome)
-                            review_notes = st.text_area("复盘备注", value=default_notes)
-                            submitted = st.form_submit_button("保存复盘")
-                            if submitted:
-                                update_event_memo_review(memo_id, review_status, review_notes, outcome)
-                                st.success("✅ 复盘已保存")
-
-                    if not df.empty and 'news_title' in df.columns:
-                        related_signals = df[df['news_title'] == title]
-                        if not related_signals.empty:
-                            st.markdown(f"**关联信号数量**: {len(related_signals)}")
-                            st.dataframe(
-                                related_signals[['stock_code', 'signal', 'confidence', 'created_at']].head(10),
-                                use_container_width=True,
-                                hide_index=True,
-                            )
 
 # ================= 4. 入口函数 =================
 def main():
