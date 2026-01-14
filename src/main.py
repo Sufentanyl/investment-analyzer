@@ -286,6 +286,12 @@ class AdvancedInvestmentAnalyzer:
 
             if final_results:
                 await self.send_report(final_results, chat_id)
+            elif is_manual:
+                # 手动触发但没有发现高价值新闻时，通知用户
+                await self.telegram_bot.send_message(
+                    chat_id=chat_id,
+                    text="🤷‍♂️ 本次巡逻未发现高价值投资机会\n\n所有新闻的AI评估置信度均低于阈值，暂不推荐。"
+                )
 
         except Exception as e:
             logger.error(f"流程出错: {e}", exc_info=True)
