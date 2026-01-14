@@ -532,9 +532,11 @@ def show_main_dashboard():
                             st.metric("有效置信度", f"{row['confidence_effective'] * 100:.0f}%")
 
                         if 'gap_confidence' in row.index and 'validation_score' in row.index:
+                            gap_conf = row.get('gap_confidence') if not pd.isna(row.get('gap_confidence')) else 0
+                            val_score = row.get('validation_score') if not pd.isna(row.get('validation_score')) else 0
                             st.caption(
-                                f"信息差: {row.get('gap_confidence', 0):.2f} | "
-                                f"量价验证: {row.get('validation_score', 0):.2f}"
+                                f"信息差: {gap_conf:.2f} | "
+                                f"量价验证: {val_score:.2f}"
                             )
                         if 'coverage_status' in row.index:
                             st.caption(f"覆盖状态: {row.get('coverage_status', 'unknown')}")
@@ -742,9 +744,11 @@ def show_main_dashboard():
                     with c4:
                         st.metric("最近时间", row['created_at'].strftime('%m-%d %H:%M'))
 
+                    gap_conf = row.get('gap_confidence') if not pd.isna(row.get('gap_confidence')) else 0
+                    val_score = row.get('validation_score') if not pd.isna(row.get('validation_score')) else 0
                     st.caption(
-                        f"信息差均值: {row.get('gap_confidence', 0):.2f} | "
-                        f"量价验证均值: {row.get('validation_score', 0):.2f}"
+                        f"信息差均值: {gap_conf:.2f} | "
+                        f"量价验证均值: {val_score:.2f}"
                     )
 
             date_min = memo_df['created_at'].min().date()
