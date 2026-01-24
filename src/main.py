@@ -360,30 +360,24 @@ class AdvancedInvestmentAnalyzer:
 
             # 组装完整文案
             template_label = template_info.get('label')
-            memo_block = "\n".join(memo_lines) if memo_lines else "1) 事件原文: 待确认\n2) 先反应市场: 待确认\n3) A股映射池: 待确认\n4) 对冲腿: 仅A股交易\n5) 失效条件: 待确认"
-            verification_note = event_memo.get('verification')
-            sector_note = event_memo.get('sectors')
-            transmission_path = event_memo.get('transmission_path')
-            alert_level = event_memo.get('alert_level', 'info')
-            alert_keywords = event_memo.get('alert_keywords', '')
-            validation_score = analysis.get('validation_score', 0)
+            
+            # 只有当置信度极高时才显示量化指标
+            quant_info = ""
+            confidence_effective = analysis.get('confidence_effective', 0)
             gap_confidence = analysis.get('gap_confidence', 0.5)
-            confidence_effective = analysis.get('confidence_effective', analysis.get('confidence', 0))
+            if confidence_effective > 0.8:
+                quant_info = f"\n🔥 **高置信度**: {confidence_effective:.2f} | 💎 **信息差**: {gap_confidence:.2f}\n"
+
+            # 只有当命中关键词时才显示
+            alert_keywords_str = ""
+            if alert_keywords:
+                 alert_keywords_str = f"\n🔔 **命中关键词**: {alert_keywords}"
 
             full_msg = (
-                f"{icon} **{news['title']}**\n"
-                f"🔥 **涉及概念**: {concept_str}\n"
-                f"🧭 **模板**: {template_label or '未匹配'}\n"
-                f"🏷️ **方向**: {sector_note or '未分类'}\n\n"
-                f"{final_report}\n\n"
-                f"🧩 **事件簇**: #{event_cluster_id or 'NA'}\n"
-                f"🧪 **验证分**: {validation_score:.2f} | **信息差**: {gap_confidence:.2f}\n"
-                f"🧠 **有效置信度**: {confidence_effective:.2f}\n\n"
-                f"🛣️ **传导路径**: {transmission_path or '待确认'}\n\n"
-                f"🔔 **推送等级**: {'强弹窗' if alert_level == 'strong' else '普通推送' if alert_level == 'normal' else '信息提示'}\n"
-                f"🧩 **命中关键词**: {alert_keywords or '未命中'}\n\n"
-                f"🧾 **五行事件模板**\n{memo_block}\n\n"
-                f"✅ **二次验证**: {verification_note or '量价匹配/板块扩散/关键数据节点'}\n\n"
+                f"{icon} **{news['title']}**\n\n"
+                f"{final_report}\n"
+                f"{quant_info}"
+                f"{alert_keywords_str}\n"
                 f"⏱️ {datetime.now(pytz.timezone('Asia/Shanghai')).strftime('%H:%M')}"
             )
 
@@ -430,8 +424,8 @@ class AdvancedInvestmentAnalyzer:
 
     def start_scheduler(self):
         scheduler = AsyncIOScheduler(timezone=pytz.timezone('Asia/Shanghai'))
-        # 🔥 修改为 45 分钟
-        scheduler.add_job(self.run_analysis, trigger=IntervalTrigger(minutes=45), id='interval_monitor', max_instances=1)
+        # 🔥 修改为 15 分钟，提高时效性
+        scheduler.add_job(self.run_analysis, trigger=IntervalTrigger(minutes=15), id='interval_monitor', max_instances=1)
         scheduler.add_job(self.report_futures, trigger=CronTrigger(hour=9, minute=15), id='futures_morning_report')
         # 🆕 新增：每天10点和15点分析持仓股票走势
         scheduler.add_job(self.analyze_holdings, trigger=CronTrigger(hour='10,15', minute=0), id='holdings_monitor', max_instances=1)
@@ -466,22 +460,31 @@ class AdvancedInvestmentAnalyzer:
 
             for r in results:
                 code = r['code']
-                trend = r['trend']
+                trend = r['trend'] # 上涨/下跌/震荡
                 confidence = r['confidence']
-                reason = r['reason']
                 price = r['current_price']
-                change_5d = r['change_5d']
+                
+                # 新增字段
+                action = r.get('action', '观望')
+                reason = r.get('reason', '暂无分析')
+                safe_range = r.get('safe_range', 'N/A')
+                risk_alert = r.get('risk_alert', 'N/A')
                 support = r.get('support', 'N/A')
                 resistance = r.get('resistance', 'N/A')
+                pattern = r.get('pattern', 'N/A')
 
                 # 趋势图标
-                trend_icons = {'上涨': '📈', '下跌': '📉', '震荡': '➡️'}
+                trend_icons = {'上涨': '�', '下跌': '�', '震荡': '〰️'}
                 icon = trend_icons.get(trend, '❓')
 
-                report_lines.append(f"{icon} **{code}** {trend} (信心度: {confidence:.1%})")
-                report_lines.append(f"   当前价格: {price:.2f}元 | 5日: {change_5d:+.2f}%")
-                report_lines.append(f"   支撑位: {support} | 压力位: {resistance}")
-                report_lines.append(f"   分析: {reason}")
+                # 组装卡片
+                report_lines.append(f"{icon} **{code} {action}** | {trend}")
+                report_lines.append(f"   💡 **建议**: {reason}")
+                report_lines.append(f"   🛡️ **安全**: {safe_range} | ⚠️ **警惕**: {risk_alert}")
+                report_lines.append(f"   📐 **点位**: 支撑{support} | 压力{resistance}")
+                if pattern != 'N/A':
+                    report_lines.append(f"   🧠 **形态**: {pattern}")
+                report_lines.append(f"   💰 **现价**: {price:.2f}")
                 report_lines.append("")
 
             full_msg = "\n".join(report_lines)
@@ -1067,50 +1070,224 @@ async def api_usage_command(u, c):
     """查询API使用情况"""
     await c.bot_data['analyzer'].check_api_usage_handler(update=u, context=c)
 
+# 🆕 ValueCell 深度研究命令
+async def research_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /research 600519 - 深度研究贵州茅台
+    使用 ValueCell ResearchAdapter 进行深度分析
+    """
+    if not context.args:
+        await update.message.reply_text(
+            "❌ **用法**: `/research 股票代码`\n\n"
+            "💡 **示例**:\n"
+            "• `/research 600519` - 深度研究茅台\n"
+            "• `/research 300750` - 深度研究宁德时代",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        return
+    
+    stock_code = context.args[0].strip()
+    
+    # 发送处理中消息
+    msg = await update.message.reply_text(
+        f"🔬 **深度研究中**: {stock_code}\n\n"
+        f"⏳ 正在获取公告、搜索信息、生成分析...\n"
+        f"预计需要 15-30 秒...",
+        parse_mode=ParseMode.MARKDOWN
+    )
+    
+    try:
+        analyzer = context.bot_data['analyzer']
+        result = await analyzer.llm_analyzer.deep_research(stock_code)
+        
+        if result.get('error'):
+            await msg.edit_text(f"❌ 研究失败: {result['error']}")
+            return
+        
+        # 构建报告
+        stock_name = result.get('stock_name', stock_code)
+        report = f"""🔬 **{stock_name} ({stock_code}) 深度研究报告**
+
+━━━━━━━━━━━━━━━
+📄 **最新公告** ({len(result.get('filings', []))} 条)
+━━━━━━━━━━━━━━━
+"""
+        for f in result.get('filings', [])[:3]:
+            report += f"• {f.get('date', '')}: {f.get('title', '')[:40]}...\n"
+        
+        if not result.get('filings'):
+            report += "暂无公告\n"
+        
+        report += f"""
+━━━━━━━━━━━━━━━
+🔍 **AI 深度分析**
+━━━━━━━━━━━━━━━
+{result.get('analysis', '分析生成失败')[:1500]}
+"""
+        
+        if result.get('recommendation'):
+            report += f"""
+━━━━━━━━━━━━━━━
+💡 **投资建议**
+━━━━━━━━━━━━━━━
+{result.get('recommendation')}
+"""
+        
+        await msg.edit_text(report, parse_mode=ParseMode.MARKDOWN)
+        
+    except Exception as e:
+        logger.error(f"深度研究命令失败: {e}")
+        await msg.edit_text(f"❌ 研究失败: {str(e)[:100]}")
+
+# 🆕 ValueCell 智能新闻分析命令
+async def deepnews_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /deepnews AI芯片 - 智能分析 AI 芯片相关新闻
+    使用 ValueCell NewsAdapter 进行智能新闻分析
+    """
+    if not context.args:
+        await update.message.reply_text(
+            "❌ **用法**: `/deepnews 关键词`\n\n"
+            "💡 **示例**:\n"
+            "• `/deepnews 人工智能` - 分析 AI 相关新闻\n"
+            "• `/deepnews 芯片` - 分析半导体新闻\n"
+            "• `/deepnews Tesla` - 分析特斯拉新闻",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        return
+    
+    keyword = " ".join(context.args)
+    
+    # 发送处理中消息
+    msg = await update.message.reply_text(
+        f"📰 **智能新闻分析中**: {keyword}\n\n"
+        f"⏳ 正在获取突发新闻、金融新闻，分析对 A 股影响...\n"
+        f"预计需要 20-40 秒...",
+        parse_mode=ParseMode.MARKDOWN
+    )
+    
+    try:
+        analyzer = context.bot_data['analyzer']
+        result = await analyzer.llm_analyzer.smart_news_analysis(keyword)
+        
+        if result.get('error'):
+            await msg.edit_text(f"❌ 分析失败: {result['error']}")
+            return
+        
+        # 构建报告
+        news_count = len(result.get('news', []))
+        report = f"""📰 **{keyword} 智能新闻分析**
+
+━━━━━━━━━━━━━━━
+🔴 **突发新闻** ({len(result.get('breaking_news', []))} 条)
+━━━━━━━━━━━━━━━
+"""
+        for n in result.get('breaking_news', [])[:3]:
+            report += f"• [{n.get('source', '')}] {n.get('title', '')[:50]}...\n"
+        
+        if not result.get('breaking_news'):
+            report += "暂无突发新闻\n"
+        
+        report += f"""
+━━━━━━━━━━━━━━━
+💰 **金融新闻** ({len(result.get('financial_news', []))} 条)
+━━━━━━━━━━━━━━━
+"""
+        for n in result.get('financial_news', [])[:3]:
+            report += f"• [{n.get('source', '')}] {n.get('title', '')[:50]}...\n"
+        
+        if not result.get('financial_news'):
+            report += "暂无金融新闻\n"
+        
+        # 综合分析
+        report += f"""
+━━━━━━━━━━━━━━━
+🧠 **AI 综合分析**
+━━━━━━━━━━━━━━━
+{result.get('summary', '综合分析生成失败')[:800]}
+"""
+        
+        # A股影响
+        if result.get('a_share_impact'):
+            report += """
+━━━━━━━━━━━━━━━
+📊 **A股影响预测**
+━━━━━━━━━━━━━━━
+"""
+            for impact in result.get('a_share_impact', [])[:3]:
+                direction_icon = "🚀" if impact.get('direction') == '利好' else ("🔻" if impact.get('direction') == '利空' else "➡️")
+                report += f"{direction_icon} **{impact.get('sector', '')}**: {impact.get('reason', '')}\n"
+        
+        await msg.edit_text(report, parse_mode=ParseMode.MARKDOWN)
+        
+    except Exception as e:
+        logger.error(f"智能新闻分析命令失败: {e}")
+        await msg.edit_text(f"❌ 分析失败: {str(e)[:100]}")
+
+# 🆕 ValueCell Agent 状态命令
+async def agent_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /agent_status - 查看 ValueCell Agent 状态
+    """
+    try:
+        analyzer = context.bot_data['analyzer']
+        status = analyzer.llm_analyzer.get_valuecell_status()
+        
+        research_status = "✅ 已初始化" if status['research_adapter']['initialized'] else "⏳ 未初始化"
+        research_model = status['research_adapter']['model'] or "N/A"
+        news_status = "✅ 已初始化" if status['news_adapter']['initialized'] else "⏳ 未初始化"
+        news_model = status['news_adapter']['model'] or "N/A"
+        
+        msg = f"""🤖 **ValueCell Agent 状态**
+
+━━━━━━━━━━━━━━━
+🔬 **ResearchAdapter**
+━━━━━━━━━━━━━━━
+状态: {research_status}
+模型: `{research_model}`
+
+━━━━━━━━━━━━━━━
+📰 **NewsAdapter**
+━━━━━━━━━━━━━━━
+状态: {news_status}
+模型: `{news_model}`
+
+━━━━━━━━━━━━━━━
+💡 **使用方法**
+━━━━━━━━━━━━━━━
+• `/research 600519` - 深度研究股票
+• `/deepnews 芯片` - 智能新闻分析
+"""
+        await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
+        
+    except Exception as e:
+        logger.error(f"Agent 状态查询失败: {e}")
+        await update.message.reply_text(f"❌ 查询失败: {str(e)[:100]}")
+
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    help_text = """🤖 **AI 投资助理 (专业版)**
+    help_text = """🤖 **AI 投资助理**
 
 ━━━━━━━━━━━━━━━
-🤖 **AI智能功能** 🔥
+📊 **核心功能**
 ━━━━━━━━━━━━━━━
-✨ **AI自动绑定关键词**（已启用）
-AI会自动学习，将概念关键词关联到股票
-
-例如：
-• 看到"AI芯片" → 自动关联相关股票
-• 看到"新能源汽车" → 自动关联产业链
-
-控制命令：
-`/autobind_on` - 启用AI自动绑定
-`/autobind_off` - 禁用AI自动绑定
-`/alert_levels` - 设置推送等级（strong/normal/info）
+`/analyze` - 🔍 分析持仓走势（AI多模型会诊）
+`/add 代码` - ➕ 添加持仓股票
+`/del 代码` - ➖ 删除持仓股票
+`/list` - 📋 查看当前配置
 
 ━━━━━━━━━━━━━━━
 📊 **回测系统**
 ━━━━━━━━━━━━━━━
-快速回测：
-`/backtest_7d` - 回测7天
-`/backtest_30d` - 回测30天
-`/backtest_90d` - 回测90天
-
-自定义回测：
-`/backtest [天数] [策略]`
+`/backtest` - 自定义回测
+`/backtest_7d` - 快速回测7天
+`/backtest_30d` - 快速回测30天
 
 ━━━━━━━━━━━━━━━
-🎮 **持仓管理**
+🔧 **系统管理**
 ━━━━━━━━━━━━━━━
-`/add 代码` - 添加持仓
-`/del 代码` - 删除持仓
-`/holdings` - 📊 分析持仓走势（AI技术分析）
-`/clear` - 清空所有持仓
-`/list` - 查看配置
-`/alert_levels` - 调整推送等级
-
-━━━━━━━━━━━━━━━
-📦 **关键词管理**
-━━━━━━━━━━━━━━━
-`/import_keywords` - 导入A股核心关键词库
-`/bind 关键词 股票` - 手动绑定关键词
+`/status` - 💊 系统运行状态
+`/dashboard` - 🖥️ 打开网页控制台
+`/api` - 📈 API用量统计
 
 ━━━━━━━━━━━━━━━
 🧠 **AI对话**
@@ -1120,18 +1297,21 @@ AI会自动学习，将概念关键词关联到股票
 `/qwen [问题]` - 问Qwen
 
 ━━━━━━━━━━━━━━━
-💡 **A股示例**
+⚙️ **高级功能** (隐藏命令)
 ━━━━━━━━━━━━━━━
-`/add 600519` - 添加茅台
-`/analyze` - 手动巡逻
-`/backtest_30 hold_3_days`
+`/clear` - 清空所有持仓
+`/bind 关键词 股票` - 绑定关键词
+`/autobind_on/off` - AI自动绑定开关
+`/alert_levels` - 推送等级过滤
+`/import_keywords` - 导入A股关键词库
 
 ━━━━━━━━━━━━━━━
-📌 **说明**
+💡 **快速上手**
 ━━━━━━━━━━━━━━━
-• 持仓股票：信号阈值0.7（更敏感）
-• 非持仓：信号阈值0.8
-• 支持A股（6/0/3开头）和美股"""
+1. `/add 600519` (添加茅台)
+2. `/analyze` (分析持仓)
+3. `/backtest_30d` (回测30天)
+"""
     await update.message.reply_text(help_text, parse_mode=ParseMode.MARKDOWN)
 
 # 封装 wrapper 以便 context 调用
@@ -1168,28 +1348,18 @@ async def status_command(u, c):
 async def post_init(app):
     app.bot_data['analyzer'].start_scheduler()
 
+    # 🔥 Simplified: 精简菜单 (21 → 10 commands)
     commands = [
-        BotCommand("start", "📖 使用说明书"),
-        BotCommand("analyze", "👮 手动巡逻"),
-        BotCommand("backtest", "🔬 自定义回测"),
-        BotCommand("backtest_7d", "📊 回测7天"),
-        BotCommand("backtest_30d", "📊 回测30天"),
-        BotCommand("backtest_90d", "📊 回测90天"),
-        BotCommand("status", "🏥 系统状态"),
-        BotCommand("api", "📊 API使用情况"),
-        BotCommand("dashboard", "🖥️ 量化指挥室"),
+        BotCommand("start", "📖 使用说明"),
+        BotCommand("analyze", "🔍 分析持仓"),
         BotCommand("add", "➕ 添加持仓"),
         BotCommand("del", "➖ 删除持仓"),
-        BotCommand("clear", "🗑️ 清空持仓"),
-        BotCommand("autobind_on", "✅ 启用AI自动绑定"),
-        BotCommand("autobind_off", "❌ 禁用AI自动绑定"),
-        BotCommand("import_keywords", "📦 导入A股关键词库"),
-        BotCommand("list", "📋 配置列表"),
-        BotCommand("alert_levels", "🔔 推送等级过滤"),
-        BotCommand("bind", "🔗 绑定关键词"),
-        BotCommand("deepseek", "🧠 问DeepSeek"),
-        BotCommand("gemini", "⚖️ 问Gemini"),
-        BotCommand("qwen", "💭 问Qwen"),
+        BotCommand("list", "📋 查看配置"),
+        BotCommand("backtest", "📊 回测系统"),
+        BotCommand("status", "💊 系统状态"),
+        BotCommand("dashboard", "🖥️ 控制台"),
+        BotCommand("api", "📈 API用量"),
+        BotCommand("deepseek", "🧠 AI对话"),
     ]
     await app.bot.set_my_commands(commands)
 
@@ -1240,6 +1410,11 @@ def run_bot():
             app.add_handler(CommandHandler('deepseek', chat_handler_wrapper))
             app.add_handler(CommandHandler('qwen', chat_handler_wrapper))
             app.add_handler(CommandHandler('gemini', chat_handler_wrapper))
+            
+            # 🆕 ValueCell 集成命令
+            app.add_handler(CommandHandler('research', research_command))
+            app.add_handler(CommandHandler('deepnews', deepnews_command))
+            app.add_handler(CommandHandler('agent_status', agent_status_command))
             
             logger.info("🤖 机器人主程序正在启动...")
             

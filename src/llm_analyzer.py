@@ -69,6 +69,7 @@ class LLMAnalyzer:
         self.client_ds = None
         self.client_qwen = None
         self.client_kimi = None  # 🔥 新增
+        self.client_gemini = None  # 🔥 修复: 用于持仓分析综合建议
 
         # 🔥 修复: aiohttp session 复用
         self._aiohttp_session = None
@@ -76,6 +77,10 @@ class LLMAnalyzer:
         # 🔥 新增: Telegram Bot (用于发送fallback通知)
         self.telegram_bot = None
         self.chat_id = None
+
+        # 🆕 ValueCell 集成 (懒加载)
+        self._research_adapter = None
+        self._news_adapter = None
 
         try:
             self.memory = RAGMemory()
@@ -102,6 +107,12 @@ class LLMAnalyzer:
             self.client_qwen = AsyncOpenAI(api_key=self.qwen_key, base_url=self.qwen_base)
         if not self.client_kimi and self.kimi_key:
             self.client_kimi = AsyncOpenAI(api_key=self.kimi_key, base_url=self.kimi_base)
+        # 🔥 修复: 初始化 Gemini 客户端 (用于持仓分析综合建议)
+        if not self.client_gemini and self.gemini_keys:
+            self.client_gemini = AsyncOpenAI(
+                api_key=self.gemini_keys[0],
+                base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
+            )
 
     async def _get_aiohttp_session(self):
         """🔥 修复: 复用 aiohttp.ClientSession"""
@@ -113,6 +124,91 @@ class LLMAnalyzer:
         """🔥 新增: 清理资源"""
         if self._aiohttp_session and not self._aiohttp_session.closed:
             await self._aiohttp_session.close()
+        # 🆕 清理 ValueCell 适配器
+        if self._research_adapter:
+            await self._research_adapter.close()
+        if self._news_adapter:
+            await self._news_adapter.close()
+
+    def _init_valuecell_adapters(self):
+        """🆕 懒加载 ValueCell 适配器"""
+        if self._research_adapter is None:
+            try:
+                from valuecell_bridge import ResearchAdapter
+                self._research_adapter = ResearchAdapter()
+                logger.info("✅ ResearchAdapter 初始化成功")
+            except Exception as e:
+                logger.warning(f"⚠️ ResearchAdapter 初始化失败: {e}")
+        
+        if self._news_adapter is None:
+            try:
+                from valuecell_bridge import NewsAdapter
+                self._news_adapter = NewsAdapter()
+                logger.info("✅ NewsAdapter 初始化成功")
+            except Exception as e:
+                logger.warning(f"⚠️ NewsAdapter 初始化失败: {e}")
+
+    async def deep_research(self, stock_code: str) -> Dict[str, Any]:
+        """
+        🆕 深度研究 A 股 (使用 ValueCell ResearchAdapter)
+        
+        Args:
+            stock_code: 股票代码，如 "600519"
+        
+        Returns:
+            研究结果字典
+        """
+        self._init_valuecell_adapters()
+        
+        if not self._research_adapter:
+            return {"error": "ResearchAdapter 未初始化"}
+        
+        try:
+            # 获取股票名称
+            stock_name = await self._research_adapter.get_stock_name(stock_code)
+            query = f"{stock_name}({stock_code}) 投资价值分析"
+            
+            result = await self._research_adapter.deep_research(query, stock_code)
+            result["stock_name"] = stock_name
+            return result
+        except Exception as e:
+            logger.error(f"❌ 深度研究失败: {e}")
+            return {"error": str(e)}
+
+    async def smart_news_analysis(self, keyword: str) -> Dict[str, Any]:
+        """
+        🆕 智能新闻分析 (使用 ValueCell NewsAdapter)
+        
+        Args:
+            keyword: 搜索关键词
+        
+        Returns:
+            新闻分析结果
+        """
+        self._init_valuecell_adapters()
+        
+        if not self._news_adapter:
+            return {"error": "NewsAdapter 未初始化"}
+        
+        try:
+            result = await self._news_adapter.get_smart_news(keyword)
+            return result
+        except Exception as e:
+            logger.error(f"❌ 智能新闻分析失败: {e}")
+            return {"error": str(e)}
+
+    def get_valuecell_status(self) -> Dict[str, Any]:
+        """🆕 获取 ValueCell Agent 状态"""
+        return {
+            "research_adapter": {
+                "initialized": self._research_adapter is not None,
+                "model": self._research_adapter.model_config.model_id if self._research_adapter else None
+            },
+            "news_adapter": {
+                "initialized": self._news_adapter is not None,
+                "model": self._news_adapter.model_config.model_id if self._news_adapter else None
+            }
+        }
 
     def _load_yaml_config(self):
         default_conf = {
@@ -277,6 +373,29 @@ class LLMAnalyzer:
 
         return self._attach_event_context(title, content, final_decision)
 
+    def _build_deep_logic_prompt(self, title: str, content: str) -> str:
+        """构建深度逻辑分析提示词"""
+        return f"""你是一位资深A股投资分析师。请分析以下新闻对A股市场的影响。
+
+【新闻标题】{title}
+【新闻内容】{content or '无详细内容'}
+
+请以JSON格式返回分析结果，包含以下字段：
+{{
+  "signal": "positive/negative/neutral",  // 对A股的整体影响
+  "confidence": 0.0-1.0,  // 置信度
+  "reason": "简要说明判断理由",
+  "concept": "相关A股概念板块",
+  "a_share_stocks": ["可能受影响的A股代码"],
+  "summary": "一句话总结"
+}}
+
+注意：
+1. 重点关注对A股的实际影响，而非仅分析新闻本身
+2. 如果是海外新闻，分析其对A股相关板块的传导路径
+3. confidence应反映判断的确定性，不确定时给较低值
+"""
+
     async def _analyze_legacy(self, title, content):
         self._ensure_clients()
         if not self.client_ds: return {}
@@ -335,21 +454,34 @@ class LLMAnalyzer:
         stocks_context = ""
         if bot_result.get('stock_data'):
             for s in bot_result['stock_data']:
-                stocks_context += f"股票：{s['name']} ({s['code']}) | 现价：{s['price']} | 技术：{s.get('tech')}\n"
+                stocks_context += f"股票：{s['name']} ({s['code']}) | 现价：{s['price']}\n"
 
         event_memo = bot_result.get("event_memo", {})
-        template_label = bot_result.get("event_template", {}).get("label", "未匹配模板")
+        template_label = bot_result.get("event_template", {}).get("label", "通用商业/宏观事件")
+        
         prompt = f"""
-你是一名投资顾问。请根据以下“大师辩论”结果，写一份幽默总结。
-【新闻】{news_title}
-【模板】{template_label}
-【传导路径】{event_memo.get('transmission_path', '待确认')}
-【多头】{bull_point}
-【空头】{bear_point}
-【结论】{bot_result.get('reason')}
-【盘面】{stocks_context}
-【二次验证】{event_memo.get('verification', '量价匹配/板块扩散/关键数据节点')}
-请输出：1.大师分歧 2.操作建议 3.避坑指南
+你是一名专业、客观的A股投资顾问。请分析以下国际新闻，直接通过思维链推导其对A股市场的具体影响。不要使用任何比喻、幽默或废话。
+
+【新闻标题】{news_title}
+【事件类型】{template_label}
+【多方观点】{bull_point}
+【空方观点】{bear_point}
+【相关股票】{stocks_context}
+
+请严格按以下格式输出（不要Markdown代码块）：
+
+【事件解读】
+(1-2句话简述新闻核心内容，并翻译成中文)
+
+【A股影响】
+🚀 **利好方向**：
+- (列出受益板块/股票，并说明逻辑，如：无则写"无")
+
+🔻 **利空方向**：
+- (列出受损板块/股票，并说明逻辑，如：无则写"无")
+
+💡 **操作建议**：
+(给出1条简短、可执行的建议，如：关注某某指标，或回避某某风险)
 """
         return await self._call_gemini_text(prompt)
 
@@ -656,8 +788,67 @@ class LLMAnalyzer:
                 logger.error(f"行情获取失败 {code}: {e}")
         return results
 
-    def _build_deep_logic_prompt(self, title, content):
-        return f"分析新闻：{title}\n输出JSON: {{ 'stock_market_influence': 'positive/neutral', 'confidence': 0.8, 'reason': '...' }}"
+    async def _analyze_technical_deepseek(self, code, df) -> Dict:
+        """DeepSeek 负责硬核技术分析"""
+        if not self.client_ds: return {}
+        
+        latest = df.iloc[-1]
+        prompt = f"""角色：资深技术派操盘手。分析【{code}】。
+数据：现价{latest['收盘']}，10日涨跌{(latest['收盘']-df.iloc[-10]['收盘'])/df.iloc[-10]['收盘']*100:.1f}%。
+近10日收盘：{', '.join([f'{x:.2f}' for x in df['收盘'].tail(10)])}。
+请输出JSON：
+{{
+    "trend": "上涨/下跌/震荡",
+    "support": 12.34,
+    "resistance": 15.67,
+    " ma_signal": "5日线上穿10日线"
+}}"""
+        return await self._call_llm_json_async(self.client_ds, self.deepseek_model, prompt, "DeepSeek-Tech")
+
+    async def _analyze_pattern_qwen(self, code, df) -> Dict:
+        """Qwen 负责形态识别"""
+        if not self.client_qwen: return {}
+        
+        prompt = f"""角色：A股短线游资。分析【{code}】的K线形态。
+数据：{df.tail(10).to_json(orient='records', force_ascii=False)}
+请输出JSON：
+{{
+    "pattern": "老鸭头/出水芙蓉/断头铡刀/仙人指路...",
+    "bull_strength": 0-10（多头力度）,
+    "intent": "主力洗盘/出货/吸筹"
+}}"""
+        return await self._call_llm_json_async(self.client_qwen, self.qwen_model, prompt, "Qwen-Pattern")
+
+    async def _synthesize_holdings_advice(self, code, price, tech, pattern) -> Dict:
+        """Gemini 负责说人话，给出操作建议"""
+        prompt = f"""
+你是一名实战派A股老股民，正在教新朋友怎么操作。请根据以下两条AI的分析，给出一个接地气、明确的操作建议。
+
+【技术面分析 (DeepSeek)】
+趋势：{tech.get('trend')}
+支撑：{tech.get('support')}
+压力：{tech.get('resistance')}
+信号：{tech.get('ma_signal')}
+
+【形态面分析 (Qwen)】
+形态：{pattern.get('pattern')}
+主力意图：{pattern.get('intent')}
+多头力度：{pattern.get('bull_strength')}/10
+
+【当前信息】
+股票：{code}
+现价：{price}
+
+请输出JSON（严格格式）：
+{{
+    "action": "安心持有 / 逢低加仓 / 分批减仓 / 止损离场" (选一个),
+    "safe_range": "30.50 - 31.20" (当前安全的持股区间),
+    "risk_alert": "有效跌破 29.80" (什么情况要跑),
+    "reason": "一句话大白话理由，比如'主力在洗盘，缩量回调不用怕'。",
+    "trend": "{tech.get('trend')}" 
+}}
+"""
+        return await self._call_llm_json_async(self.client_gemini, self.gemini_model, prompt, "Gemini-Advisor")
 
     async def analyze_holdings_trend(self, stock_codes: List[str]) -> List[Dict]:
         """📊 分析持仓股票走势（不依赖新闻）"""
@@ -733,72 +924,83 @@ class LLMAnalyzer:
   "resistance": 105.80
 }}"""
 
-                # 调用AI分析
-                self._ensure_clients()
+                # 定义两个独立的分析任务
+                task_tech = self._analyze_technical_deepseek(code, df)
+                task_pattern = self._analyze_pattern_qwen(code, df)
 
-                # 优先使用 DeepSeek（分析能力强）
-                if self.client_ds:
-                    analysis_result = await self._call_llm_json_async(
-                        self.client_ds,
-                        self.deepseek_model,
-                        analysis_prompt,
-                        "DeepSeek"
-                    )
-                elif self.client_qwen:
-                    analysis_result = await self._call_llm_json_async(
-                        self.client_qwen,
-                        self.qwen_model,
-                        analysis_prompt,
-                        "Qwen"
-                    )
-                else:
-                    # 如果都不可用，使用基础规则判断
-                    analysis_result = self._fallback_trend_analysis(
+                # 并行执行
+                tech_res, pattern_res = await asyncio.gather(task_tech, task_pattern, return_exceptions=True)
+
+                # 处理异常
+                if isinstance(tech_res, Exception):
+                    logger.error(f"DeepSeek Technical Analysis Failed: {tech_res}")
+                    tech_res = {}
+                if isinstance(pattern_res, Exception):
+                    logger.error(f"Qwen Pattern Analysis Failed: {pattern_res}")
+                    pattern_res = {}
+
+                if not tech_res and not pattern_res:
+                     analysis_result = self._fallback_trend_analysis(
                         current_price, ma5, ma10, change_5d, change_10d, volume_ratio
                     )
-
-                if analysis_result:
-                    # 保存到数据库
-                    trend = analysis_result.get('trend', '震荡')
-                    confidence = analysis_result.get('confidence', 0.5)
-                    reason = analysis_result.get('reason', '暂无分析')
-
-                    # 映射 trend 到 signal
-                    trend_to_signal = {
-                        '上涨': 'positive',
-                        '下跌': 'negative',
-                        '震荡': 'neutral'
-                    }
-                    signal_type = trend_to_signal.get(trend, 'neutral')
-
-                    # 保存趋势分析信号
-                    self.db.save_signal(
-                        stock_code=code,
-                        news_title=f"[持仓监控] {code} 走势分析",
-                        signal=signal_type,
-                        confidence=confidence,
-                        reason=reason,
-                        price=float(current_price),
-                        summary=f"支撑位: {analysis_result.get('support', 'N/A')} | 压力位: {analysis_result.get('resistance', 'N/A')}",
-                        confidence_effective=confidence
+                     # 构造一个符合新格式的结果
+                     final_advice = {
+                         "action": "观望",
+                         "safe_range": "N/A",
+                         "risk_alert": "无数据",
+                         "reason": "AI分析服务暂时不可用，使用基础规则兜底。",
+                         "trend": analysis_result.get('trend', '震荡')
+                     }
+                else:
+                    # 综合分析 (Gemini)
+                    final_advice = await self._synthesize_holdings_advice(
+                        code, current_price, tech_res, pattern_res
                     )
 
-                    results.append({
-                        'code': code,
-                        'trend': trend,
-                        'signal': signal_type,
-                        'confidence': confidence,
-                        'reason': reason,
-                        'current_price': current_price,
-                        'support': analysis_result.get('support'),
-                        'resistance': analysis_result.get('resistance'),
-                        'change_5d': change_5d,
-                        'change_10d': change_10d,
-                        'volume_ratio': volume_ratio,
-                        'analyzed_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                    })
+                # 保存结果
+                trend = final_advice.get('trend', '震荡')
+                confidence = 0.8 # 综合分析置信度通常较高
+                
+                # 映射 trend 到 signal
+                trend_to_signal = {
+                    '上涨': 'positive',
+                    '下跌': 'negative',
+                    '震荡': 'neutral'
+                }
+                signal_type = trend_to_signal.get(trend, 'neutral')
 
-                    logger.info(f"✅ {code} 走势分析完成: {trend} (信心度: {confidence:.2f})")
+                # 保存趋势分析信号
+                self.db.save_signal(
+                    stock_code=code,
+                    news_title=f"[持仓会诊] {code} {final_advice.get('action')}",
+                    signal=signal_type,
+                    confidence=confidence,
+                    reason=final_advice.get('reason'),
+                    price=float(current_price),
+                    summary=f"安全区: {final_advice.get('safe_range')} | 警惕: {final_advice.get('risk_alert')}",
+                    confidence_effective=confidence
+                )
+
+                results.append({
+                    'code': code,
+                    'trend': trend,
+                    'signal': signal_type,
+                    'confidence': confidence,
+                    'reason': final_advice.get('reason'),
+                    'action': final_advice.get('action'),
+                    'safe_range': final_advice.get('safe_range'),
+                    'risk_alert': final_advice.get('risk_alert'),
+                    'current_price': current_price,
+                    'support': tech_res.get('support', 'N/A') if isinstance(tech_res, dict) else 'N/A',
+                    'resistance': tech_res.get('resistance', 'N/A') if isinstance(tech_res, dict) else 'N/A',
+                    'pattern': pattern_res.get('pattern', 'N/A') if isinstance(pattern_res, dict) else 'N/A',
+                    'change_5d': change_5d,
+                    'change_10d': change_10d,
+                    'volume_ratio': volume_ratio,
+                    'analyzed_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                })
+
+                logger.info(f"✅ {code} 走势分析完成: {trend}")
 
             except Exception as e:
                 logger.error(f"❌ 股票 {code} 趋势分析失败: {e}")
