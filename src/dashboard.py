@@ -3,10 +3,16 @@ import pandas as pd
 import sqlite3
 import os
 import re
+import sys
+import asyncio
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime
 import pytz
+
+# 🆕 添加 src 到路径以便导入 valuecell_bridge
+if '/app' not in sys.path:
+    sys.path.insert(0, '/app')
 
 # ================= 1. 页面配置 =================
 st.set_page_config(
@@ -385,7 +391,8 @@ def show_main_dashboard():
     st.divider()
 
     # 3. 核心功能区
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+        "🤖 AI 助手",
         "📈 我的持仓",
         "🚀 核心情报流",
         "📊 深度数据分析",
@@ -394,8 +401,121 @@ def show_main_dashboard():
         "🧩 事件簇",
     ])
 
-    # ================= 📈 我的持仓 (新增) =================
+    # ================= 🤖 AI 助手 (新增 ValueCell 集成) =================
     with tab1:
+        st.markdown("## 🤖 ValueCell AI 助手")
+        st.caption("深度研究股票 · 智能新闻分析 · A股影响预测")
+        
+        # 创建两列布局
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("### 🔬 深度研究")
+            st.caption("输入股票代码，获取公告、AI分析和投资建议")
+            
+            stock_code = st.text_input("股票代码", placeholder="例如: 600519", key="research_stock")
+            
+            if st.button("🔍 开始研究", key="btn_research", type="primary"):
+                if stock_code:
+                    with st.spinner(f"🔬 正在深度研究 {stock_code}..."):
+                        try:
+                            from valuecell_bridge import ResearchAdapter
+                            adapter = ResearchAdapter()
+                            
+                            # 运行异步任务
+                            loop = asyncio.new_event_loop()
+                            asyncio.set_event_loop(loop)
+                            result = loop.run_until_complete(adapter.deep_research(
+                                f"{stock_code} 投资价值分析", 
+                                stock_code
+                            ))
+                            loop.run_until_complete(adapter.close())
+                            
+                            if result.get('error'):
+                                st.error(f"❌ 研究失败: {result['error']}")
+                            else:
+                                # 显示结果
+                                st.success("✅ 研究完成!")
+                                
+                                # 公告
+                                filings = result.get('filings', [])
+                                if filings:
+                                    st.markdown("#### 📄 最新公告")
+                                    for f in filings[:5]:
+                                        st.caption(f"• {f.get('date', '')}: {f.get('title', '')}")
+                                
+                                # AI 分析
+                                st.markdown("#### 🧠 AI 分析")
+                                st.info(result.get('analysis', '暂无分析'))
+                                
+                                # 投资建议
+                                if result.get('recommendation'):
+                                    st.markdown("#### 💡 投资建议")
+                                    st.success(result.get('recommendation'))
+                        except Exception as e:
+                            st.error(f"❌ 研究失败: {e}")
+                else:
+                    st.warning("请输入股票代码")
+        
+        with col2:
+            st.markdown("### 📰 智能新闻")
+            st.caption("输入关键词，获取新闻及 A股影响分析")
+            
+            keyword = st.text_input("搜索关键词", placeholder="例如: 人工智能", key="news_keyword")
+            
+            if st.button("📰 分析新闻", key="btn_news", type="primary"):
+                if keyword:
+                    with st.spinner(f"📰 正在分析 {keyword} 相关新闻..."):
+                        try:
+                            from valuecell_bridge import NewsAdapter
+                            adapter = NewsAdapter()
+                            
+                            loop = asyncio.new_event_loop()
+                            asyncio.set_event_loop(loop)
+                            result = loop.run_until_complete(adapter.get_smart_news(keyword))
+                            loop.run_until_complete(adapter.close())
+                            
+                            if result.get('error'):
+                                st.error(f"❌ 分析失败: {result['error']}")
+                            else:
+                                st.success("✅ 分析完成!")
+                                
+                                # 突发新闻
+                                breaking = result.get('breaking_news', [])
+                                if breaking:
+                                    st.markdown("#### 🔴 突发新闻")
+                                    for n in breaking[:3]:
+                                        st.caption(f"• [{n.get('source', '')}] {n.get('title', '')}")
+                                
+                                # 金融新闻
+                                financial = result.get('financial_news', [])
+                                if financial:
+                                    st.markdown("#### 💰 金融新闻")
+                                    for n in financial[:3]:
+                                        st.caption(f"• [{n.get('source', '')}] {n.get('title', '')}")
+                                
+                                # 综合分析
+                                st.markdown("#### 🧠 综合分析")
+                                st.info(result.get('summary', '暂无分析'))
+                                
+                                # A股影响
+                                impacts = result.get('a_share_impact', [])
+                                if impacts:
+                                    st.markdown("#### 📊 A股影响预测")
+                                    for imp in impacts[:5]:
+                                        direction = imp.get('direction', '中性')
+                                        icon = "🚀" if direction == '利好' else "🔻" if direction == '利空' else "➡️"
+                                        st.markdown(f"{icon} **{imp.get('sector', '')}**: {imp.get('reason', '')}")
+                        except Exception as e:
+                            st.error(f"❌ 分析失败: {e}")
+                else:
+                    st.warning("请输入搜索关键词")
+        
+        st.divider()
+        st.caption("💡 提示: 也可以在 Telegram 中使用 `/research 600519` 或 `/deepnews 芯片` 命令")
+
+    # ================= 📈 我的持仓 =================
+    with tab2:
         st.markdown("## 📈 我的持仓监控")
 
         # 读取配置
@@ -473,7 +593,7 @@ def show_main_dashboard():
                     else:
                         st.info("📭 暂无该股票的信号数据")
 
-    with tab2:
+    with tab3:
         # 🔥 修复: 如果df为空，显示提示
         if df.empty:
             st.info("📭 暂无信号数据，请等待 AI 巡逻...")
@@ -541,7 +661,7 @@ def show_main_dashboard():
                         if 'coverage_status' in row.index:
                             st.caption(f"覆盖状态: {row.get('coverage_status', 'unknown')}")
 
-    with tab3:
+    with tab4:
         # 🔥 修复: 如果df为空，显示提示
         if df.empty:
             st.info("📭 暂无信号数据，请等待 AI 巡逻...")
@@ -564,7 +684,7 @@ def show_main_dashboard():
                 else:
                     st.info("暂无置信度数据")
 
-    with tab4:
+    with tab5:
         st.subheader("🔬 历史回测结果")
 
         # 加载回测数据
@@ -685,7 +805,7 @@ def show_main_dashboard():
                     hide_index=True
                 )
 
-    with tab5:
+    with tab6:
         st.subheader("🧾 事件备忘录")
         load_limit = st.slider("加载条数", min_value=50, max_value=500, value=200, step=50)
         memo_df = load_event_memos(load_limit)
@@ -766,7 +886,7 @@ def show_main_dashboard():
                         if keywords and isinstance(keywords, list):
                             st.markdown(f"**关键词**: {', '.join(keywords)}")
 
-    with tab6:
+    with tab7:
         st.subheader("🧩 事件簇聚合")
         if df.empty or 'event_cluster_id' not in df.columns:
             st.info("📭 暂无事件簇数据，等待 AI 生成或升级后刷新")
