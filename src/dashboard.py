@@ -475,8 +475,32 @@ def show_main_dashboard():
                             if result.get('error'):
                                 st.error(f"研究失败: {result['error']}")
                             else:
-                                # 显示结果
                                 st.success("研究完成")
+                                
+                                # 股票信息卡片
+                                stock_info = result.get('stock_info', {})
+                                if stock_info.get('name'):
+                                    c1, c2, c3, c4 = st.columns(4)
+                                    with c1:
+                                        st.metric("股票", f"{stock_info.get('name', '')}")
+                                    with c2:
+                                        price = stock_info.get('price', 0)
+                                        change = stock_info.get('change_pct', 0)
+                                        st.metric("价格", f"¥{price:.2f}", f"{change:+.2f}%")
+                                    with c3:
+                                        fin = stock_info.get('financial', {})
+                                        pe = fin.get('pe_dynamic')
+                                        st.metric("PE", f"{pe:.1f}" if pe else "N/A")
+                                    with c4:
+                                        pb = fin.get('pb')
+                                        st.metric("PB", f"{pb:.2f}" if pb else "N/A")
+                                    
+                                    # 北向资金
+                                    north = stock_info.get('northbound', {})
+                                    if north:
+                                        ratio = north.get('hold_ratio', 0)
+                                        add_pct = north.get('add_shares_pct', 0)
+                                        st.caption(f"北向持股: {ratio:.2f}% {'↑' if add_pct > 0 else '↓' if add_pct < 0 else ''}{abs(add_pct):.2f}%")
                                 
                                 # 公告
                                 filings = result.get('filings', [])

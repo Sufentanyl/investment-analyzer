@@ -208,6 +208,123 @@ class AShareDataSource:
             logger.warning(f"获取股票信息失败: {e}")
         
         return {"code": stock_code, "name": stock_code}
+    
+    async def get_financial_metrics(self, stock_code: str) -> dict:
+        """
+        获取股票财务指标 (PE/PB/ROE/市值等)
+        """
+        try:
+            if stock_code.startswith("6"):
+                secid = f"1.{stock_code}"
+            else:
+                secid = f"0.{stock_code}"
+            
+            # 东方财富财务指标接口
+            url = "https://push2.eastmoney.com/api/qt/stock/get"
+            params = {
+                "secid": secid,
+                # PE(动), PB, 总市值, 流通市值, 市盈率(静), 市净率
+                "fields": "f9,f23,f20,f21,f115,f116,f117,f162,f163"
+            }
+            
+            async with self.session.get(url, params=params, timeout=5) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    info = data.get("data", {})
+                    
+                    # 处理数值 (东方财富返回的是整数，需要除以相应倍数)
+                    def safe_divide(val, divisor=100):
+                        if val and val != "-":
+                            try:
+                                return float(val) / divisor
+                            except:
+                                pass
+                        return None
+                    
+                    return {
+                        "pe_dynamic": safe_divide(info.get("f9"), 100),  # PE(动)
+                        "pb": safe_divide(info.get("f23"), 100),  # 市净率
+                        "total_mv": info.get("f20", 0),  # 总市值 (元)
+                        "circ_mv": info.get("f21", 0),  # 流通市值 (元)
+                        "pe_static": safe_divide(info.get("f115"), 100),  # PE(静)
+                        "roe": safe_divide(info.get("f162"), 100),  # ROE
+                        "gross_margin": safe_divide(info.get("f163"), 100),  # 毛利率
+                    }
+        except Exception as e:
+            logger.warning(f"获取财务指标失败: {e}")
+        
+        return {}
+    
+    async def get_northbound_flow(self, stock_code: str) -> dict:
+        """
+        获取北向资金持仓变化
+        """
+        try:
+            if stock_code.startswith("6"):
+                market = "001"  # 沪市
+            else:
+                market = "002"  # 深市
+            
+            # 东方财富北向资金接口
+            url = "https://datacenter-web.eastmoney.com/api/data/v1/get"
+            params = {
+                "reportName": "RPT_MUTUAL_STOCK_NORTHSTA",
+                "columns": "SECURITY_CODE,SECURITY_NAME,HOLD_SHARES,HOLD_MARKET_CAP,HOLD_SHARES_RATIO,ADD_SHARES_AMP",
+                "filter": f'(SECURITY_CODE="{stock_code}")',
+                "pageSize": 1,
+                "sortColumns": "TRADE_DATE",
+                "sortTypes": -1,
+                "source": "WEB",
+                "client": "WEB"
+            }
+            
+            async with self.session.get(url, params=params, timeout=8) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    result = data.get("result", {})
+                    items = result.get("data", [])
+                    
+                    if items:
+                        item = items[0]
+                        return {
+                            "hold_shares": item.get("HOLD_SHARES", 0),  # 持股数
+                            "hold_market_cap": item.get("HOLD_MARKET_CAP", 0),  # 持股市值
+                            "hold_ratio": item.get("HOLD_SHARES_RATIO", 0),  # 持股比例
+                            "add_shares_pct": item.get("ADD_SHARES_AMP", 0),  # 增持幅度
+                        }
+        except Exception as e:
+            logger.debug(f"获取北向资金数据失败: {e}")
+        
+        return {}
+    
+    async def get_full_stock_data(self, stock_code: str) -> dict:
+        """
+        获取完整股票数据 (基本信息 + 财务指标 + 北向资金)
+        """
+        # 并发获取所有数据
+        import asyncio
+        
+        basic_task = self.get_stock_info(stock_code)
+        financial_task = self.get_financial_metrics(stock_code)
+        northbound_task = self.get_northbound_flow(stock_code)
+        
+        basic, financial, northbound = await asyncio.gather(
+            basic_task, financial_task, northbound_task,
+            return_exceptions=True
+        )
+        
+        result = {}
+        
+        if isinstance(basic, dict):
+            result.update(basic)
+        
+        if isinstance(financial, dict):
+            result["financial"] = financial
+        
+        if isinstance(northbound, dict) and northbound:
+            result["northbound"] = northbound
+        
+        return result
 
 
 class LLMFallback:

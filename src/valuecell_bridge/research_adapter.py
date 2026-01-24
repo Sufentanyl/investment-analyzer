@@ -100,9 +100,9 @@ class ResearchAdapter:
                 filings = await data_source.get_stock_filings(stock_code)
                 results["filings"] = filings[:5]
                 
-                # 获取股票基本信息
-                stock_info = await data_source.get_stock_info(stock_code)
-                results["stock_info"] = stock_info
+                # 获取完整股票数据 (基本信息 + 财务指标 + 北向资金)
+                stock_data = await data_source.get_full_stock_data(stock_code)
+                results["stock_info"] = stock_data
             
             # 2. 网页搜索相关信息
             search_results = await self.web_search(query)
@@ -205,7 +205,7 @@ class ResearchAdapter:
     async def _generate_analysis(self, query: str, stock_code: str, context: Dict) -> str:
         """使用 LLM 生成综合分析"""
         if not self.client:
-            return "⚠️ LLM 客户端未初始化"
+            return "LLM 客户端未初始化"
         
         # 构建上下文
         filings_text = ""
@@ -216,10 +216,46 @@ class ResearchAdapter:
         if context.get("web_search"):
             search_text = "\n".join([f"- {s['title']}: {s['snippet'][:100]}..." for s in context["web_search"][:3]])
         
+        # 财务指标
+        financial_text = ""
+        stock_info = context.get("stock_info", {})
+        if stock_info:
+            name = stock_info.get("name", stock_code)
+            price = stock_info.get("price", 0)
+            change = stock_info.get("change_pct", 0)
+            
+            financial = stock_info.get("financial", {})
+            pe = financial.get("pe_dynamic")
+            pb = financial.get("pb")
+            roe = financial.get("roe")
+            
+            # 市值转换为亿
+            total_mv = financial.get("total_mv", 0)
+            total_mv_yi = total_mv / 100000000 if total_mv else 0
+            
+            financial_text = f"""股票名称: {name}
+当前价格: {price:.2f} 元 ({change:+.2f}%)
+市盈率(PE): {pe:.2f if pe else 'N/A'}
+市净率(PB): {pb:.2f if pb else 'N/A'}
+净资产收益率(ROE): {roe:.2f}% if roe else 'N/A'
+总市值: {total_mv_yi:.0f} 亿"""
+            
+            # 北向资金
+            northbound = stock_info.get("northbound", {})
+            if northbound:
+                hold_ratio = northbound.get("hold_ratio", 0)
+                add_pct = northbound.get("add_shares_pct", 0)
+                financial_text += f"\n北向持股比例: {hold_ratio:.2f}%"
+                if add_pct:
+                    financial_text += f" (变动: {add_pct:+.2f}%)"
+        
         prompt = f"""作为资深 A 股分析师，请分析以下信息并提供深度研究报告。
 
 【研究主题】{query}
 【股票代码】{stock_code or '未指定'}
+
+【财务数据】
+{financial_text or '暂无财务数据'}
 
 【最新公告】
 {filings_text or '暂无公告'}
@@ -228,12 +264,12 @@ class ResearchAdapter:
 {search_text or '暂无新闻'}
 
 请输出结构化的研究报告，包含:
-1. 公司/行业概况 (2-3句)
-2. 最新动态分析 (基于公告和新闻)
-3. 投资机会与风险
-4. 关键指标监控建议
+1. 公司概况与估值分析 (基于 PE/PB/ROE)
+2. 最新动态 (基于公告和新闻)
+3. 资金面分析 (如有北向资金数据)
+4. 投资机会与风险提示
 
-使用简洁专业的语言，直接输出，不要 Markdown 代码块。"""
+使用简洁专业的语言，直接输出。"""
 
         try:
             resp = await self.client.chat.completions.create(
@@ -244,7 +280,7 @@ class ResearchAdapter:
             )
             return resp.choices[0].message.content
         except Exception as e:
-            logger.error(f"❌ LLM 分析生成失败: {e}")
+            logger.error(f"LLM 分析生成失败: {e}")
             return f"分析生成失败: {e}"
     
     async def _generate_recommendation(self, stock_code: str, analysis: str) -> str:
