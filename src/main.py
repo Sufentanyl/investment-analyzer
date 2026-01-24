@@ -1348,17 +1348,17 @@ async def status_command(u, c):
 async def post_init(app):
     app.bot_data['analyzer'].start_scheduler()
 
-    # 🔥 Simplified: 精简菜单 (21 → 10 commands)
+    # 🔥 菜单 (含 ValueCell 新功能)
     commands = [
         BotCommand("start", "📖 使用说明"),
         BotCommand("analyze", "🔍 分析持仓"),
+        BotCommand("research", "🔬 深度研究"),
+        BotCommand("deepnews", "📰 智能新闻"),
         BotCommand("add", "➕ 添加持仓"),
         BotCommand("del", "➖ 删除持仓"),
         BotCommand("list", "📋 查看配置"),
         BotCommand("backtest", "📊 回测系统"),
         BotCommand("status", "💊 系统状态"),
-        BotCommand("dashboard", "🖥️ 控制台"),
-        BotCommand("api", "📈 API用量"),
         BotCommand("deepseek", "🧠 AI对话"),
     ]
     await app.bot.set_my_commands(commands)
