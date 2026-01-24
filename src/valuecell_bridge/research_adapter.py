@@ -31,7 +31,7 @@ class ResearchAdapter:
     """
     研究代理适配器
     提供深度研究功能，包括:
-    - A 股公告获取
+    - A 股公告获取 (多数据源自动切换)
     - 公司财务分析
     - 网页搜索
     - 综合研究报告生成
@@ -40,19 +40,29 @@ class ResearchAdapter:
     def __init__(self):
         self._session: Optional[aiohttp.ClientSession] = None
         self._initialized = False
+        self._data_source = None
         
         # 导入配置
         from .config import get_model_config, create_openai_client
         self.model_config = get_model_config("research_agent")
         self.client = create_openai_client(self.model_config)
         
-        logger.info(f"🔬 ResearchAdapter 初始化完成，使用模型: {self.model_config.provider}/{self.model_config.model_id}")
+        logger.info(f"ResearchAdapter 初始化完成，使用模型: {self.model_config.provider}/{self.model_config.model_id}")
     
     async def _get_session(self) -> aiohttp.ClientSession:
         """获取或创建 aiohttp session"""
         if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession()
+            timeout = aiohttp.ClientTimeout(total=30, connect=10)
+            self._session = aiohttp.ClientSession(timeout=timeout)
         return self._session
+    
+    async def _get_data_source(self):
+        """获取数据源实例"""
+        if self._data_source is None:
+            from .utils import AShareDataSource
+            session = await self._get_session()
+            self._data_source = AShareDataSource(session)
+        return self._data_source
     
     async def close(self):
         """关闭资源"""
@@ -82,10 +92,17 @@ class ResearchAdapter:
         }
         
         try:
-            # 1. 如果提供了股票代码，获取公告
+            # 1. 如果提供了股票代码，获取公告和股票信息
             if stock_code:
-                filings = await self.get_ashare_filings(stock_code)
-                results["filings"] = filings[:5]  # 最多5条
+                data_source = await self._get_data_source()
+                
+                # 获取公告 (多数据源自动切换)
+                filings = await data_source.get_stock_filings(stock_code)
+                results["filings"] = filings[:5]
+                
+                # 获取股票基本信息
+                stock_info = await data_source.get_stock_info(stock_code)
+                results["stock_info"] = stock_info
             
             # 2. 网页搜索相关信息
             search_results = await self.web_search(query)
@@ -107,7 +124,7 @@ class ResearchAdapter:
     
     async def get_ashare_filings(self, stock_code: str, limit: int = 10) -> List[Dict[str, Any]]:
         """
-        获取 A 股公告
+        获取 A 股公告 (使用多数据源)
         
         Args:
             stock_code: 股票代码，如 "600519"
@@ -116,53 +133,16 @@ class ResearchAdapter:
         Returns:
             公告列表
         """
-        logger.info(f"📄 获取 A 股公告: {stock_code}")
-        
-        filings = []
+        logger.info(f"获取 A 股公告: {stock_code}")
         
         try:
-            # 使用东方财富公告接口
-            session = await self._get_session()
-            
-            # 构建请求
-            url = "https://np-anotice-stock.eastmoney.com/api/security/ann"
-            params = {
-                "sr": -1,
-                "page_size": limit,
-                "page_index": 1,
-                "ann_type": "A",
-                "stock_list": stock_code,
-                "f_node": 0,
-                "s_node": 0
-            }
-            
-            async with session.get(url, params=params, timeout=10) as resp:
-                if resp.status == 200:
-                    # 东方财富 API 返回 text/plain，需要手动解析 JSON
-                    text = await resp.text()
-                    data = json.loads(text)
-                    items = data.get("data", {}).get("list", [])
-                    
-                    for item in items[:limit]:
-                        filings.append({
-                            "title": item.get("title", ""),
-                            "date": item.get("notice_date", ""),
-                            "type": item.get("columns", [{}])[0].get("column_name", "公告") if item.get("columns") else "公告",
-                            "url": f"https://data.eastmoney.com/notices/detail/{stock_code}/{item.get('art_code', '')}.html"
-                        })
-                    
-                    logger.info(f"✅ 获取到 {len(filings)} 条公告")
-                else:
-                    logger.warning(f"⚠️ 获取公告失败: HTTP {resp.status}")
-        
-        except asyncio.TimeoutError:
-            logger.warning("⚠️ 获取公告超时")
-        except json.JSONDecodeError as e:
-            logger.error(f"❌ 公告 JSON 解析失败: {e}")
+            data_source = await self._get_data_source()
+            filings = await data_source.get_stock_filings(stock_code, limit)
+            logger.info(f"获取到 {len(filings)} 条公告")
+            return filings
         except Exception as e:
-            logger.error(f"❌ 获取公告异常: {e}")
-        
-        return filings
+            logger.error(f"获取公告异常: {e}")
+            return []
     
     async def web_search(self, query: str, num_results: int = 5) -> List[Dict[str, Any]]:
         """
