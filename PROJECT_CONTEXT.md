@@ -1,9 +1,10 @@
 # Investment Analyzer 项目上下文
 
-**最后更新**: 2026-01-04
-**项目状态**: 🟢 运行正常
+**最后更新**: 2026-01-24
+**项目状态**: 🟢 运行正常 + ValueCell AI 集成
 **VPS地址**: ***REMOVED***
 **作者背景**: 编程小白，在AI助手帮助下完成
+**重大更新**: ValueCell 多智能体深度研究集成 (2026-01-24)
 
 ---
 
@@ -56,14 +57,79 @@ investment-analyzer/
 │   ├── information_gap_detector.py  # 信息差检测
 │   ├── technical_analysis.py    # 技术分析
 │   ├── backtest.py             # 轻量级回测系统
-│   └── database.py             # 数据库管理
-├── initial_keywords.json        # A股核心关键词库 ⭐ (2026-01-04新增)
+│   ├── database.py             # 数据库管理
+│   ├── dashboard.py            # Streamlit 可视化面板
+│   └── valuecell_bridge/       # ⭐ ValueCell AI 集成 (2026-01-24)
+│       ├── __init__.py
+│       ├── config.py           # 模型配置管理
+│       ├── research_adapter.py # 深度研究适配器
+│       ├── news_adapter.py     # 智能新闻适配器
+│       └── utils.py            # 工具函数（重试、多数据源、LLM降级）
+├── vendor/
+│   └── valuecell/              # ValueCell 源码（参考用）
+├── initial_keywords.json        # A股核心关键词库 (2026-01-04)
 ├── config.yaml                  # 配置文件（不提交到Git）
 ├── .env                         # 环境变量（不提交到Git）
 ├── docker-compose.yml
 ├── PROJECT_CONTEXT.md           # 本文件
 └── README.md                    # GitHub说明文档
 ```
+
+---
+
+## 🆕 ValueCell AI 集成 (2026-01-24)
+
+### 功能概述
+
+集成 ValueCell 多智能体平台，提供专业级深度研究和智能新闻分析。
+
+**新增命令**:
+- `/research <股票代码>` - 深度研究（公告 + 财务数据 + AI分析）
+- `/deepnews <关键词>` - 智能新闻分析（突发/金融新闻 + A股影响预测）
+- `/agent_status` - 查看 ValueCell Agent 状态
+
+**核心特性**:
+- ✅ **多数据源自动切换**: 东方财富 → 巨潮资讯
+- ✅ **财务指标分析**: PE/PB/ROE/市值/北向资金
+- ✅ **重试机制**: 自动重试 + 指数退避
+- ✅ **LLM 降级**: DeepSeek → Qwen → Gemini → Kimi
+- ✅ **并发获取**: 同时获取公告、财务、北向资金数据
+
+### 技术架构
+
+**适配器模式**: 不修改 ValueCell 源码，通过轻量级适配器调用核心功能
+
+```python
+from valuecell_bridge import ResearchAdapter, NewsAdapter
+
+# 深度研究
+adapter = ResearchAdapter()
+result = await adapter.deep_research("投资价值分析", "600519")
+
+# 智能新闻
+news_adapter = NewsAdapter()
+news = await news_adapter.get_smart_news("人工智能")
+```
+
+### 数据源优先级
+
+| 数据类型 | 主数据源 | 备用数据源 | 说明 |
+|---------|---------|----------|------|
+| 公告 | 东方财富 | 巨潮资讯 | 自动切换 |
+| 实时行情 | 东方财富 | - | 10秒超时 |
+| 财务指标 | 东方财富 | - | PE/PB/ROE |
+| 北向资金 | 东方财富 | - | 可选数据 |
+| 新闻 | SerpApi | - | Google News/Search |
+
+### Dashboard 集成
+
+Streamlit 面板新增 "AI 助手" Tab:
+- 明亮简约设计
+- 双栏布局（深度研究 | 智能新闻）
+- 实时显示财务指标卡片
+- 北向资金持仓变化追踪
+
+**访问地址**: https://streamlit.jingyibing.top
 
 ---
 
