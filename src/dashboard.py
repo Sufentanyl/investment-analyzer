@@ -16,88 +16,131 @@ if '/app' not in sys.path:
 
 # ================= 1. 页面配置 =================
 st.set_page_config(
-    page_title="AI 量化指挥室 (Pro)",
-    page_icon="🔒",
+    page_title="ValueCell 量化分析",
+    page_icon="◆",
     layout="wide",
-    initial_sidebar_state="collapsed" # 默认收起侧边栏
+    initial_sidebar_state="collapsed"
 )
 
-# 注入 CSS 样式 (暗黑金融风)
+# 注入 CSS 样式 (明亮简约风格)
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&family=Fraunces:wght@600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
 :root {
-  --bg-1: #0B0F14;
-  --bg-2: #111824;
-  --card: rgba(18, 24, 33, 0.85);
-  --accent: #E7B75F;
-  --accent-2: #5FE7C0;
-  --text: #E9EEF5;
-  --muted: #9AA7B3;
+  --bg-1: #FAFBFC;
+  --bg-2: #FFFFFF;
+  --card: #FFFFFF;
+  --accent: #2563EB;
+  --accent-2: #10B981;
+  --text: #1F2937;
+  --muted: #6B7280;
+  --border: #E5E7EB;
 }
 
 html, body, [class*="css"] {
-  font-family: "Space Grotesk", sans-serif;
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--text);
 }
 
 .stApp {
-  background: radial-gradient(1200px 600px at 80% -10%, rgba(95, 231, 192, 0.15), transparent 60%),
-              radial-gradient(900px 500px at 10% 0%, rgba(231, 183, 95, 0.18), transparent 55%),
-              linear-gradient(180deg, var(--bg-2), var(--bg-1));
+  background: var(--bg-1);
 }
 
 .hero {
-  background: linear-gradient(135deg, rgba(231,183,95,0.15), rgba(95,231,192,0.08));
-  border: 1px solid rgba(231,183,95,0.25);
-  border-radius: 18px;
-  padding: 20px 24px;
-  margin-bottom: 18px;
+  background: linear-gradient(135deg, #EFF6FF, #F0FDF4);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px 28px;
+  margin-bottom: 20px;
 }
 
 .hero-title {
-  font-family: "Fraunces", serif;
-  font-size: 30px;
-  margin: 0 0 6px 0;
+  font-size: 26px;
+  font-weight: 700;
+  margin: 0 0 4px 0;
+  color: var(--text);
 }
 
 .hero-sub {
   color: var(--muted);
   margin: 0;
+  font-size: 14px;
 }
 
 .kpi-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
+  gap: 16px;
 }
 
 .kpi-card {
   background: var(--card);
-  border: 1px solid rgba(255,255,255,0.06);
-  border-radius: 12px;
-  padding: 14px 16px;
-  box-shadow: 0 6px 18px rgba(0,0,0,0.35);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px 20px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
 }
 
-.kpi-label { color: var(--muted); font-size: 12px; }
-.kpi-value { font-size: 22px; font-weight: 700; }
+.kpi-label { color: var(--muted); font-size: 13px; font-weight: 500; }
+.kpi-value { font-size: 24px; font-weight: 700; color: var(--text); }
 
 .badge {
   display: inline-block;
-  padding: 2px 8px;
-  border-radius: 999px;
+  padding: 4px 10px;
+  border-radius: 6px;
   font-size: 12px;
-  background: rgba(255,255,255,0.08);
+  font-weight: 500;
+  background: #F3F4F6;
+  color: var(--text);
 }
 
 .stMetric { background-color: transparent; }
+.stMetric label { color: var(--muted) !important; font-weight: 500; }
+.stMetric [data-testid="stMetricValue"] { color: var(--text) !important; }
+
+/* Tabs 样式 */
+.stTabs [data-baseweb="tab-list"] {
+  gap: 8px;
+  background: transparent;
+}
+
+.stTabs [data-baseweb="tab"] {
+  background: transparent;
+  border-radius: 8px;
+  padding: 8px 16px;
+  font-weight: 500;
+}
+
+.stTabs [aria-selected="true"] {
+  background: var(--accent) !important;
+  color: white !important;
+}
+
+/* Button 样式 */
+.stButton > button {
+  border-radius: 8px;
+  font-weight: 500;
+  border: none;
+  padding: 8px 20px;
+}
+
+.stButton > button[kind="primary"] {
+  background: var(--accent);
+  color: white;
+}
+
+/* Input 样式 */
+.stTextInput > div > div > input {
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
 
 #MainMenu {visibility: hidden;}
 footer {visibility: hidden;}
 </style>
 """, unsafe_allow_html=True)
+
 
 # ================= 🔥 安全门卫模块 =================
 def check_password():
@@ -329,8 +372,8 @@ def extract_win_rate(text):
 def show_main_dashboard():
     st.markdown("""
     <div class="hero">
-      <div class="hero-title">ValueCell AI 作战指挥室</div>
-      <p class="hero-sub">多智能体辩论 · 事件簇聚合 · 信息差评分 · 量价验证</p>
+      <div class="hero-title">ValueCell 量化分析平台</div>
+      <p class="hero-sub">深度研究 · 智能新闻 · 信号分析 · 回测验证</p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -339,9 +382,8 @@ def show_main_dashboard():
     df = load_data()
     
     if df.empty:
-        st.warning("⏳ 暂无信号数据，请等待 AI 巡逻...")
+        st.info("暂无信号数据，请等待 AI 巡逻...")
         if st.button("手动刷新"): st.rerun()
-        # 🔥 修复: 不要return，继续显示tab结构
 
     # 2. 顶部仪表盘 (KPIs)
     col1, col2, col3, col4 = st.columns(4)
@@ -383,8 +425,8 @@ def show_main_dashboard():
                 bear_count = len(df[df[signal_col] == 'negative'])
             else:
                 bull_count = bear_count = 0
-            sentiment = "偏多头 🔥" if bull_count > bear_count else "偏空头 ❄️"
-            st.metric("市场AI情绪", sentiment, f"多{bull_count} : 空{bear_count}")
+            sentiment = "偏多头" if bull_count > bear_count else "偏空头"
+            st.metric("市场 AI 情绪", sentiment, f"多{bull_count} : 空{bear_count}")
         with col4:
             st.metric("最新更新", df['created_at'].iloc[0].strftime("%H:%M") if not df.empty else "--:--")
 
@@ -392,32 +434,31 @@ def show_main_dashboard():
 
     # 3. 核心功能区
     tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
-        "🤖 AI 助手",
-        "📈 我的持仓",
-        "🚀 核心情报流",
-        "📊 深度数据分析",
-        "🔬 回测结果",
-        "🧾 事件备忘录",
-        "🧩 事件簇",
+        "AI 助手",
+        "持仓监控",
+        "情报流",
+        "数据分析",
+        "回测结果",
+        "事件备忘录",
+        "事件簇",
     ])
 
     # ================= 🤖 AI 助手 (新增 ValueCell 集成) =================
     with tab1:
-        st.markdown("## 🤖 ValueCell AI 助手")
-        st.caption("深度研究股票 · 智能新闻分析 · A股影响预测")
+        st.markdown("## AI 智能助手")
+        st.caption("输入股票代码或关键词，获取深度分析")
         
-        # 创建两列布局
         col1, col2 = st.columns(2)
         
         with col1:
-            st.markdown("### 🔬 深度研究")
-            st.caption("输入股票代码，获取公告、AI分析和投资建议")
+            st.markdown("### 深度研究")
+            st.caption("输入股票代码，获取公告和 AI 分析")
             
             stock_code = st.text_input("股票代码", placeholder="例如: 600519", key="research_stock")
             
-            if st.button("🔍 开始研究", key="btn_research", type="primary"):
+            if st.button("开始研究", key="btn_research", type="primary"):
                 if stock_code:
-                    with st.spinner(f"🔬 正在深度研究 {stock_code}..."):
+                    with st.spinner(f"正在深度研究 {stock_code}..."):
                         try:
                             from valuecell_bridge import ResearchAdapter
                             adapter = ResearchAdapter()
@@ -432,40 +473,40 @@ def show_main_dashboard():
                             loop.run_until_complete(adapter.close())
                             
                             if result.get('error'):
-                                st.error(f"❌ 研究失败: {result['error']}")
+                                st.error(f"研究失败: {result['error']}")
                             else:
                                 # 显示结果
-                                st.success("✅ 研究完成!")
+                                st.success("研究完成")
                                 
                                 # 公告
                                 filings = result.get('filings', [])
                                 if filings:
-                                    st.markdown("#### 📄 最新公告")
+                                    st.markdown("#### 最新公告")
                                     for f in filings[:5]:
                                         st.caption(f"• {f.get('date', '')}: {f.get('title', '')}")
                                 
                                 # AI 分析
-                                st.markdown("#### 🧠 AI 分析")
+                                st.markdown("#### AI 分析")
                                 st.info(result.get('analysis', '暂无分析'))
                                 
                                 # 投资建议
                                 if result.get('recommendation'):
-                                    st.markdown("#### 💡 投资建议")
+                                    st.markdown("#### 投资建议")
                                     st.success(result.get('recommendation'))
                         except Exception as e:
-                            st.error(f"❌ 研究失败: {e}")
+                            st.error(f"研究失败: {e}")
                 else:
                     st.warning("请输入股票代码")
         
         with col2:
-            st.markdown("### 📰 智能新闻")
-            st.caption("输入关键词，获取新闻及 A股影响分析")
+            st.markdown("### 智能新闻")
+            st.caption("输入关键词，获取新闻及 A 股影响分析")
             
             keyword = st.text_input("搜索关键词", placeholder="例如: 人工智能", key="news_keyword")
             
-            if st.button("📰 分析新闻", key="btn_news", type="primary"):
+            if st.button("分析新闻", key="btn_news", type="primary"):
                 if keyword:
-                    with st.spinner(f"📰 正在分析 {keyword} 相关新闻..."):
+                    with st.spinner(f"正在分析 {keyword} 相关新闻..."):
                         try:
                             from valuecell_bridge import NewsAdapter
                             adapter = NewsAdapter()
@@ -476,47 +517,47 @@ def show_main_dashboard():
                             loop.run_until_complete(adapter.close())
                             
                             if result.get('error'):
-                                st.error(f"❌ 分析失败: {result['error']}")
+                                st.error(f"分析失败: {result['error']}")
                             else:
-                                st.success("✅ 分析完成!")
+                                st.success("分析完成")
                                 
                                 # 突发新闻
                                 breaking = result.get('breaking_news', [])
                                 if breaking:
-                                    st.markdown("#### 🔴 突发新闻")
+                                    st.markdown("#### 突发新闻")
                                     for n in breaking[:3]:
                                         st.caption(f"• [{n.get('source', '')}] {n.get('title', '')}")
                                 
                                 # 金融新闻
                                 financial = result.get('financial_news', [])
                                 if financial:
-                                    st.markdown("#### 💰 金融新闻")
+                                    st.markdown("#### 金融新闻")
                                     for n in financial[:3]:
                                         st.caption(f"• [{n.get('source', '')}] {n.get('title', '')}")
                                 
                                 # 综合分析
-                                st.markdown("#### 🧠 综合分析")
+                                st.markdown("#### 综合分析")
                                 st.info(result.get('summary', '暂无分析'))
                                 
                                 # A股影响
                                 impacts = result.get('a_share_impact', [])
                                 if impacts:
-                                    st.markdown("#### 📊 A股影响预测")
+                                    st.markdown("#### A 股影响预测")
                                     for imp in impacts[:5]:
                                         direction = imp.get('direction', '中性')
-                                        icon = "🚀" if direction == '利好' else "🔻" if direction == '利空' else "➡️"
+                                        icon = "↑" if direction == '利好' else "↓" if direction == '利空' else "→"
                                         st.markdown(f"{icon} **{imp.get('sector', '')}**: {imp.get('reason', '')}")
                         except Exception as e:
-                            st.error(f"❌ 分析失败: {e}")
+                            st.error(f"分析失败: {e}")
                 else:
                     st.warning("请输入搜索关键词")
         
         st.divider()
-        st.caption("💡 提示: 也可以在 Telegram 中使用 `/research 600519` 或 `/deepnews 芯片` 命令")
+        st.caption("提示: 也可以在 Telegram 中使用 /research 600519 或 /deepnews 芯片 命令")
 
-    # ================= 📈 我的持仓 =================
+    # ================= 持仓监控 =================
     with tab2:
-        st.markdown("## 📈 我的持仓监控")
+        st.markdown("## 持仓监控")
 
         # 读取配置
         config = load_user_config()
