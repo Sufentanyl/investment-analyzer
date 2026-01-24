@@ -138,7 +138,9 @@ class ResearchAdapter:
             
             async with session.get(url, params=params, timeout=10) as resp:
                 if resp.status == 200:
-                    data = await resp.json()
+                    # 东方财富 API 返回 text/plain，需要手动解析 JSON
+                    text = await resp.text()
+                    data = json.loads(text)
                     items = data.get("data", {}).get("list", [])
                     
                     for item in items[:limit]:
@@ -155,6 +157,8 @@ class ResearchAdapter:
         
         except asyncio.TimeoutError:
             logger.warning("⚠️ 获取公告超时")
+        except json.JSONDecodeError as e:
+            logger.error(f"❌ 公告 JSON 解析失败: {e}")
         except Exception as e:
             logger.error(f"❌ 获取公告异常: {e}")
         
