@@ -7,7 +7,12 @@ from contextlib import contextmanager
 logger = logging.getLogger(__name__)
 
 class DatabaseManager:
-    def __init__(self, db_path='/app/data/investment.db'):
+    def __init__(self, db_path=None):
+        if db_path is None:
+            if os.path.exists('/app/data') or os.access('/app', os.W_OK):
+                db_path = '/app/data/investment.db'
+            else:
+                db_path = os.path.join(os.getcwd(), 'data', 'investment.db')
         self.db_path = db_path
         self._conn = None  # 🔥 修复: 复用连接
         self._init_db()
@@ -16,7 +21,7 @@ class DatabaseManager:
     def _get_conn(self):
         """🔥 修复: 使用单例连接 + 上下文管理器"""
         if self._conn is None:
-            self._conn = sqlite3.connect(self.db_path)
+            self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
             self._conn.row_factory = sqlite3.Row  # 方便按列名访问
         try:
             yield self._conn
@@ -24,6 +29,8 @@ class DatabaseManager:
         except Exception:
             self._conn.rollback()
             raise
+
+    get_connection = _get_conn
 
     def close(self):
         """🔥 新增: 关闭连接"""

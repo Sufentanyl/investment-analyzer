@@ -232,12 +232,16 @@ class ResearchAdapter:
             # 市值转换为亿
             total_mv = financial.get("total_mv", 0)
             total_mv_yi = total_mv / 100000000 if total_mv else 0
-            
+
+            pe_str = f"{pe:.2f}" if isinstance(pe, (int, float)) else "N/A"
+            pb_str = f"{pb:.2f}" if isinstance(pb, (int, float)) else "N/A"
+            roe_str = f"{roe:.2f}%" if isinstance(roe, (int, float)) else "N/A"
+
             financial_text = f"""股票名称: {name}
 当前价格: {price:.2f} 元 ({change:+.2f}%)
-市盈率(PE): {pe:.2f if pe else 'N/A'}
-市净率(PB): {pb:.2f if pb else 'N/A'}
-净资产收益率(ROE): {roe:.2f}% if roe else 'N/A'
+市盈率(PE): {pe_str}
+市净率(PB): {pb_str}
+净资产收益率(ROE): {roe_str}
 总市值: {total_mv_yi:.0f} 亿"""
             
             # 北向资金
@@ -308,21 +312,14 @@ class ResearchAdapter:
             return ""
     
     async def get_stock_name(self, stock_code: str) -> str:
-        """获取股票名称"""
+        """获取股票名称 (优先使用东方财富原生接口)"""
         try:
-            import yfinance as yf
-            
-            # 转换为 yfinance 格式
-            if stock_code.isdigit():
-                if stock_code.startswith("6"):
-                    code = f"{stock_code}.SS"
-                else:
-                    code = f"{stock_code}.SZ"
-            else:
-                code = stock_code
-            
-            ticker = yf.Ticker(code)
-            info = ticker.info
-            return info.get("shortName", info.get("longName", stock_code))
-        except Exception:
-            return stock_code
+            data_source = await self._get_data_source()
+            info = await data_source.get_stock_info(stock_code)
+            name = info.get("name")
+            if name:
+                return name
+        except Exception as e:
+            logger.debug(f"东方财富获取股票名称失败: {e}")
+        return stock_code
+

@@ -29,54 +29,86 @@ class AdvancedNewsCollector:
         # 移除 browser_ws，不再需要
         
         self.rss_sources = {
+            'google_china_macro': 'https://news.google.com/rss/search?q=China+economy+OR+PBOC+OR+stimulus+when:1d&hl=en-US&gl=US&ceid=US:en',
+            'google_ai_semi': 'https://news.google.com/rss/search?q=NVIDIA+OR+TSMC+OR+semiconductor+OR+OpenAI+when:1d&hl=en-US&gl=US&ceid=US:en',
+            'google_fed_commodities': 'https://news.google.com/rss/search?q=Federal+Reserve+OR+gold+price+OR+copper+OR+crude+oil+when:1d&hl=en-US&gl=US&ceid=US:en',
+            'google_ev_tech': 'https://news.google.com/rss/search?q=Tesla+OR+BYD+OR+CATL+OR+humanoid+robot+when:1d&hl=en-US&gl=US&ceid=US:en',
+            'cnbc_world': 'https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100727362',
+            'cnbc_tech': 'https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=19854910',
             'bloomberg': 'https://feeds.bloomberg.com/markets/news.rss',
-            'reuters_world': 'https://www.reuters.com/world/rss',
-            'reuters_business': 'https://www.reuters.com/business/rss',
-            'reuters_markets': 'https://www.reuters.com/markets/rss',
-            'reuters_technology': 'https://www.reuters.com/technology/rss',
-            'reuters_legal': 'https://www.reuters.com/legal/rss',
-            'ft_markets': 'https://www.ft.com/markets?format=rss',
-            'ft_world': 'https://www.ft.com/world?format=rss',
-            'ft_companies': 'https://www.ft.com/companies?format=rss',
-            'ft_global_economy': 'https://www.ft.com/global-economy?format=rss',
             'wsj_markets': 'https://feeds.a.dj.com/rss/RSSMarketsMain.xml',
-            'wsj_world': 'https://feeds.a.dj.com/rss/RSSWorldNews.xml',
-            'economist_world': 'https://www.economist.com/the-world-this-week/rss.xml',
-            'economist_economics': 'https://www.economist.com/finance-and-economics/rss.xml',
+            'ft_markets': 'https://www.ft.com/markets?format=rss',
         }
         
         self.investment_keywords = {
-            'china_related': ['china', 'chinese', 'beijing', 'shanghai', 'hk', 'hong kong', 'taiwan'],
-            'global_macro': ['fed', 'federal reserve', 'rate cut', 'rate hike', 'inflation', 'cpi', 'oil', 'gold'],
-            'key_sectors': ['semiconductor', 'chip', 'ai', 'nvidia', 'tesla', 'ev', 'battery']
+            'china_related': ['china', 'chinese', 'beijing', 'shanghai', 'hk', 'hong kong', 'taiwan', 'pboc', 'stimulus', 'tariff'],
+            'global_macro': ['fed', 'federal reserve', 'rate cut', 'rate hike', 'inflation', 'cpi', 'oil', 'gold', 'copper', 'treasury'],
+            'key_sectors': ['semiconductor', 'chip', 'ai', 'nvidia', 'tsmc', 'openai', 'tesla', 'byd', 'catl', 'ev', 'battery', 'robot', 'quantum', 'biotech'],
+            'cn_catalysts': [
+                '央行', '证监会', '发改委', '工信部', '财政部', '国务院', '政治局', '国常会',
+                '降准', '降息', '社融', 'LPR', '新质生产力', '低空经济', '算力', '人工智能',
+                '半导体', '光刻机', '芯片', '人形机器人', '固态电池', '储能', '光伏', '创新药',
+                '业绩', '预增', '扭亏', '大幅增长', '中标', '大单', '合同', '回购', '增持',
+                '并购', '重组', '突破', '量产', '涨价', '提价', '英伟达', '特斯拉', '苹果'
+            ]
         }
 
     async def collect_international_news(self) -> List[Dict[str, Any]]:
+        """
+        v2.0 双轨情报采集：
+        1. 本土催化轨：东方财富 7x24 快讯 + 新浪财经 7x24 电报 + A股核心公告
+        2. 海外映射轨：Google News 专题 RSS + CNBC/Bloomberg/WSJ + SerpApi/NewsAPI
+        """
         all_news = []
         
-        # 1. SerpApi
+        # 1. 本土 7x24 财经快讯与公告轨 (优先采集，无需付费 Key)
+        enable_domestic = os.getenv("ENABLE_DOMESTIC_7X24", "true").lower() != "false"
+        if enable_domestic:
+            domestic_news = await self._collect_from_domestic_7x24()
+            all_news.extend(domestic_news)
+
+        # 2. SerpApi (可选)
         if self.serpapi_key:
             all_news.extend(await self._collect_from_serpapi())
 
-        # 2. NewsAPI (optional)
+        # 3. NewsAPI (可选)
         if self.newsapi_key:
             all_news.extend(await self._collect_from_newsapi())
 
-        # 3. RSS
+        # 4. 海外财经 RSS (并发采集)
         all_news.extend(await self._collect_from_rss())
         
-        # 3. 去重 + 按发布时间排序
+        # 5. 去重 + 双轨均衡筛选
         unique_news = self._deduplicate_news(all_news)
         unique_news.sort(key=lambda n: n.get("published_ts", 0), reverse=True)
-        latest_news = unique_news[:8]
+
+        max_total = int(os.getenv("MAX_NEWS_PER_RUN", "10"))
+        domestic_items = [n for n in unique_news if n.get("is_domestic_fast")]
+        global_items = [n for n in unique_news if not n.get("is_domestic_fast")]
+
+        # 均衡组合：最多取 6 条本土核心催化 + 4 条海外重磅映射（若某一方不足则由另一方补齐）
+        selected_domestic = domestic_items[:6]
+        selected_global = global_items[:max(4, max_total - len(selected_domestic))]
+        if len(selected_domestic) + len(selected_global) < max_total:
+            remaining = max_total - (len(selected_domestic) + len(selected_global))
+            selected_domestic = domestic_items[:6 + remaining]
+
+        latest_news = selected_domestic + selected_global
+        latest_news.sort(key=lambda n: n.get("published_ts", 0), reverse=True)
+        latest_news = latest_news[:max_total]
         
-        # 4. 补充正文 (使用 newspaper3k)
+        # 6. 补充正文 (本土7x24快讯自带完整内容，跳过newspaper3k抓取以提高速度)
         final_news = []
         sem = asyncio.Semaphore(3)
         tasks = []
         for news in latest_news:
             source = news.get('source', '')
-            skip_fulltext = source.startswith("rss_bloomberg")
+            skip_fulltext = (
+                news.get('is_domestic_fast')
+                or source.startswith("cn_")
+                or source.startswith("rss_bloomberg")
+                or source.startswith("rss_google_")
+            )
             if len(news.get('content', '')) < 200 and not skip_fulltext:
                 tasks.append(self._fill_content(news, sem))
             else:
@@ -92,8 +124,32 @@ class AdvancedNewsCollector:
             if "published_ts" in news:
                 news.pop("published_ts", None)
 
-        logger.info(f"总共收集到 {len(final_news)} 条国际新闻")
+        logger.info(
+            f"总共收集到 {len(final_news)} 条双轨情报 "
+            f"(本土快讯: {sum(1 for n in final_news if n.get('is_domestic_fast'))}, "
+            f"海外映射: {sum(1 for n in final_news if not n.get('is_domestic_fast'))})"
+        )
         return final_news
+
+    async def _collect_from_domestic_7x24(self) -> List[Dict[str, Any]]:
+        """采集本土 7x24 小时财经快讯与公司核心公告催化"""
+        try:
+            from valuecell_bridge.utils import AShareDataSource
+            session = await self._get_session()
+            ds = AShareDataSource(session)
+            raw_items = await ds.get_7x24_fast_news(limit=25)
+            filtered = []
+            for item in raw_items:
+                title = item.get("title", "")
+                content = item.get("content", "")
+                # 如果带有明确的A股关联列表，或命中核心催化词，则纳入分析
+                if item.get("stock_list") or self._check_relevance(title, content):
+                    filtered.append(item)
+            logger.info(f"🇨🇳 本土 7x24 快讯采集完成: 原始 {len(raw_items)} 条 -> 精选催化 {len(filtered)} 条")
+            return filtered
+        except Exception as e:
+            logger.warning(f"本土 7x24 快讯采集失败: {e}")
+            return []
 
     async def _collect_from_serpapi(self) -> List[Dict[str, Any]]:
         """🔥 修复: 实现 SerpApi 新闻收集"""
@@ -101,27 +157,26 @@ class AdvancedNewsCollector:
         if not self.serpapi_key:
             return results
 
-        # 定义搜索关键词
         search_queries = [
-            "china stock market",
-            "chinese economy news",
+            "china stock market policy",
+            "NVIDIA AI semiconductor supply chain",
             "federal reserve interest rate",
-            "AI technology news",
-            "semiconductor industry"
         ]
 
         session = await self._get_session()
+        keys = [k.strip() for k in self.serpapi_key.split(',') if k.strip()]
+        api_key = keys[0] if keys else self.serpapi_key
         for query in search_queries:
             params = {
                 "engine": "google",
                 "q": query,
-                "tbm": "nws",  # 新闻搜索
-                "api_key": self.serpapi_key,
+                "tbm": "nws",
+                "api_key": api_key,
                 "num": 5
             }
 
             try:
-                async with session.get("https://serpapi.com/search", params=params, timeout=15) as response:
+                async with session.get("https://serpapi.com/search", params=params, timeout=12) as response:
                     if response.status == 200:
                         data = await response.json()
                         if "news_results" in data:
@@ -150,7 +205,6 @@ class AdvancedNewsCollector:
             "federal reserve OR fed OR inflation",
             "semiconductor OR chip OR ai",
             "oil OR gold OR copper",
-            "banking OR property OR liquidity",
         ]
         query = " OR ".join(query_terms)
 
@@ -187,47 +241,47 @@ class AdvancedNewsCollector:
 
         return results
 
+    async def _collect_single_rss(self, source: str, url: str) -> List[Dict[str, Any]]:
+        items = []
+        try:
+            feed = await asyncio.wait_for(self._parse_feed(url), timeout=12)
+            entries = getattr(feed, "entries", []) or []
+            logger.info(f"RSS parsed: {source} | entries={len(entries)}")
+            for entry in entries[:8]:
+                title = getattr(entry, 'title', '') or ''
+                summary = entry.get('summary', '') if hasattr(entry, 'get') else ''
+                # 清理 HTML 标签
+                if summary and '<' in summary:
+                    try:
+                        summary = BeautifulSoup(summary, "html.parser").get_text(" ", strip=True)
+                    except Exception:
+                        pass
+                is_hit = self._check_relevance(title, summary)
+                is_high_quality = source.startswith("google_") or source == "bloomberg"
+                if is_hit or is_high_quality:
+                    published_dt = self._extract_published(entry)
+                    items.append({
+                        'source': f"rss_{source}",
+                        'title': title,
+                        'url': getattr(entry, 'link', ''),
+                        'content': summary or title,
+                        'published': published_dt.isoformat(),
+                        'published_ts': published_dt.timestamp()
+                    })
+        except Exception as e:
+            logger.warning(f"RSS {source} 采集跳过: {e}")
+        return items
+
     async def _collect_from_rss(self) -> List[Dict[str, Any]]:
+        tasks = [
+            self._collect_single_rss(source, url)
+            for source, url in self.rss_sources.items()
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
         all_news = []
-        reuters_html_map = {
-            "reuters_world": "https://www.reuters.com/world/",
-            "reuters_business": "https://www.reuters.com/business/",
-            "reuters_markets": "https://www.reuters.com/markets/",
-            "reuters_technology": "https://www.reuters.com/technology/",
-            "reuters_legal": "https://www.reuters.com/legal/",
-        }
-        for source, url in self.rss_sources.items():
-            try:
-                feed = await self._parse_feed(url)
-                if source.startswith("reuters_") and getattr(feed, "bozo", False):
-                    logger.warning(f"RSS parse error: {source} | {getattr(feed, 'bozo_exception', None)}")
-                logger.info(f"RSS parsed: {source} | entries={len(getattr(feed, 'entries', []) or [])}")
-                if source.startswith("reuters_") and not getattr(feed, "entries", []):
-                    html_url = reuters_html_map.get(source)
-                    if html_url:
-                        all_news.extend(await self._collect_reuters_html(html_url, source))
-                    continue
-                for entry in feed.entries[:10]:
-                    is_hit = self._check_relevance(entry.title, entry.get('summary', ''))
-                    is_high_quality = (
-                        source.startswith("ft_")
-                        or source.startswith("reuters_")
-                        or source.startswith("wsj_")
-                        or source.startswith("economist_")
-                        or source == "bloomberg"
-                    )
-                    if is_hit or is_high_quality:
-                        published_dt = self._extract_published(entry)
-                        all_news.append({
-                            'source': f"rss_{source}",
-                            'title': entry.title,
-                            'url': entry.link,
-                            'content': entry.get('summary', ''),
-                            'published': published_dt.isoformat(),
-                            'published_ts': published_dt.timestamp()
-                        })
-            except Exception as e:
-                logger.error(f"RSS {source} 失败: {e}")
+        for res in results:
+            if isinstance(res, list):
+                all_news.extend(res)
         return all_news
 
     async def _collect_reuters_html(self, category_url: str, source: str) -> List[Dict[str, Any]]:

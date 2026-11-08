@@ -12,7 +12,14 @@ ValueCell Bridge Module
 from .config import ValueCellConfig, get_model_config
 from .research_adapter import ResearchAdapter
 from .news_adapter import NewsAdapter
-from .utils import async_retry, AShareDataSource, LLMFallback
+from .utils import (
+    async_retry,
+    AShareDataSource,
+    LLMFallback,
+    normalize_ashare_code,
+    get_ashare_board_info,
+    fetch_ashare_kline_sync,
+)
 
 __all__ = [
     'ValueCellConfig',
@@ -22,4 +29,8 @@ __all__ = [
     'async_retry',
     'AShareDataSource',
     'LLMFallback',
+    'normalize_ashare_code',
+    'get_ashare_board_info',
+    'fetch_ashare_kline_sync',
 ]
+

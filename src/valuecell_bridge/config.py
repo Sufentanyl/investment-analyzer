@@ -53,17 +53,41 @@ class ValueCellConfig:
             self.news_agent_model = self._get_best_model_for("news")
     
     def _get_best_model_for(self, agent_type: str) -> ModelConfig:
-        """根据可用 API Key 选择最佳模型"""
-        # 优先级: DeepSeek > Qwen > Gemini > OpenRouter
-        
+        """根据可用 API Key 选择最佳模型 (DeepSeek > OpenAI/GPT > Gemini > Kimi > Qwen > OpenRouter)"""
         if os.getenv("DEEPSEEK_API_KEY"):
             return ModelConfig(
                 provider="deepseek",
-                model_id="deepseek-chat",
+                model_id=os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
                 api_key=os.getenv("DEEPSEEK_API_KEY", ""),
                 base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
             )
-        
+
+        if os.getenv("OPENAI_API_KEY"):
+            return ModelConfig(
+                provider="openai",
+                model_id=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+                api_key=os.getenv("OPENAI_API_KEY", ""),
+                base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+            )
+
+        gemini_keys = os.getenv("GEMINI_API_KEY", "")
+        if gemini_keys:
+            first_key = gemini_keys.split(",")[0].strip()
+            return ModelConfig(
+                provider="gemini",
+                model_id=os.getenv("GEMINI_MODEL", "gemini-1.5-flash").strip(),
+                api_key=first_key,
+                base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
+            )
+
+        if os.getenv("KIMI_API_KEY"):
+            return ModelConfig(
+                provider="kimi",
+                model_id=os.getenv("KIMI_MODEL", "moonshot-v1-8k"),
+                api_key=os.getenv("KIMI_API_KEY", ""),
+                base_url=os.getenv("KIMI_BASE_URL", "https://api.moonshot.cn/v1")
+            )
+
         if os.getenv("QWEN_API_KEY"):
             return ModelConfig(
                 provider="qwen",
@@ -71,17 +95,7 @@ class ValueCellConfig:
                 api_key=os.getenv("QWEN_API_KEY", ""),
                 base_url=os.getenv("QWEN_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
             )
-        
-        gemini_keys = os.getenv("GEMINI_API_KEY", "")
-        if gemini_keys:
-            first_key = gemini_keys.split(",")[0].strip()
-            return ModelConfig(
-                provider="gemini",
-                model_id=os.getenv("GEMINI_MODEL", "gemini-1.5-flash"),
-                api_key=first_key,
-                base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
-            )
-        
+
         if os.getenv("OPENROUTER_API_KEY"):
             return ModelConfig(
                 provider="openrouter",
@@ -89,7 +103,7 @@ class ValueCellConfig:
                 api_key=os.getenv("OPENROUTER_API_KEY", ""),
                 base_url="https://openrouter.ai/api/v1"
             )
-        
+
         # 回退到默认配置
         logger.warning(f"⚠️ 未找到可用的 API Key，{agent_type} agent 将无法正常工作")
         return self.default_model

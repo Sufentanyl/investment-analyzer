@@ -26,13 +26,15 @@ from information_gap_detector import InformationGapDetector
 from futures_watcher import FuturesWatcher
 from backtest import LightweightBacktester
 
-# 配置日志
+# 配置日志 (兼容容器内 /app/logs 与本地 ./logs)
+_log_dir = '/app/logs' if (os.path.exists('/app/logs') or os.access('/app', os.W_OK)) else os.path.join(os.getcwd(), 'logs')
+os.makedirs(_log_dir, exist_ok=True)
 logging.basicConfig(
     level=logging.INFO, 
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', 
     handlers=[
         logging.StreamHandler(), 
-        TimedRotatingFileHandler('/app/logs/app.log', when='midnight', backupCount=7, encoding='utf-8')
+        TimedRotatingFileHandler(os.path.join(_log_dir, 'app.log'), when='midnight', backupCount=7, encoding='utf-8')
     ]
 )
 logger = logging.getLogger(__name__)
@@ -360,22 +362,36 @@ class AdvancedInvestmentAnalyzer:
 
             # 组装完整文案
             template_label = template_info.get('label')
-            
-            # 只有当置信度极高时才显示量化指标
-            quant_info = ""
+            alert_keywords = event_memo.get('alert_keywords', '') if isinstance(event_memo, dict) else ''
+
+            # 量化评分与实战点位卡片
             confidence_effective = analysis.get('confidence_effective', 0)
             gap_confidence = analysis.get('gap_confidence', 0.5)
-            if confidence_effective > 0.8:
-                quant_info = f"\n🔥 **高置信度**: {confidence_effective:.2f} | 💎 **信息差**: {gap_confidence:.2f}\n"
+            validation_score = analysis.get('validation_score', 0)
+            quant_info = (
+                f"\n📊 **有效置信度**: `{confidence_effective:.2f}` | "
+                f"💎 **预期差**: `{gap_confidence:.2f}` | "
+                f"📈 **量价共振**: `{validation_score:.2f}`\n"
+            )
 
-            # 只有当命中关键词时才显示
+            stock_trade_lines = []
+            if analysis.get('stock_data'):
+                for s in analysis['stock_data'][:3]:
+                    hold_badge = " `[持仓]`" if s.get('is_hold') else ""
+                    stock_trade_lines.append(
+                        f"• **{s.get('name', '')}({s.get('code', '')})**{hold_badge}: "
+                        f"现价 `{s.get('price', '')}` | 低吸 `{s.get('buy_zone', 'N/A')}` | 止损 `{s.get('stop_loss_price', 'N/A')}`"
+                    )
+            stock_trade_block = ("\n🎯 **实战点位参考**:\n" + "\n".join(stock_trade_lines) + "\n") if stock_trade_lines else ""
+
             alert_keywords_str = ""
             if alert_keywords:
-                 alert_keywords_str = f"\n🔔 **命中关键词**: {alert_keywords}"
+                alert_keywords_str = f"\n🔔 **命中关键词**: {alert_keywords}"
 
             full_msg = (
                 f"{icon} **{news['title']}**\n\n"
                 f"{final_report}\n"
+                f"{stock_trade_block}"
                 f"{quant_info}"
                 f"{alert_keywords_str}\n"
                 f"⏱️ {datetime.now(pytz.timezone('Asia/Shanghai')).strftime('%H:%M')}"
@@ -424,11 +440,13 @@ class AdvancedInvestmentAnalyzer:
 
     def start_scheduler(self):
         scheduler = AsyncIOScheduler(timezone=pytz.timezone('Asia/Shanghai'))
-        # 🔥 修改为 15 分钟，提高时效性
+        # 每 15 分钟双轨巡检（本土 7x24 快讯 + 海外映射）
         scheduler.add_job(self.run_analysis, trigger=IntervalTrigger(minutes=15), id='interval_monitor', max_instances=1)
-        scheduler.add_job(self.report_futures, trigger=CronTrigger(hour=9, minute=15), id='futures_morning_report')
-        # 🆕 新增：每天10点和15点分析持仓股票走势
-        scheduler.add_job(self.analyze_holdings, trigger=CronTrigger(hour='10,15', minute=0), id='holdings_monitor', max_instances=1)
+        # 每个交易日早盘集合竞价前 08:45 触发隔夜海外映射巡检
+        scheduler.add_job(self.run_analysis, trigger=CronTrigger(day_of_week='mon-fri', hour=8, minute=45), id='pre_market_morning_patrol', max_instances=1)
+        scheduler.add_job(self.report_futures, trigger=CronTrigger(day_of_week='mon-fri', hour=9, minute=15), id='futures_morning_report')
+        # 每天10点和15点分析持仓股票走势
+        scheduler.add_job(self.analyze_holdings, trigger=CronTrigger(day_of_week='mon-fri', hour='10,15', minute=0), id='holdings_monitor', max_instances=1)
         scheduler.start()
 
     async def analyze_holdings(self, update: Update = None, context: ContextTypes.DEFAULT_TYPE = None, is_manual: bool = False):
@@ -460,11 +478,10 @@ class AdvancedInvestmentAnalyzer:
 
             for r in results:
                 code = r['code']
-                trend = r['trend'] # 上涨/下跌/震荡
-                confidence = r['confidence']
+                name = r.get('name', code)
+                trend = r['trend']
                 price = r['current_price']
                 
-                # 新增字段
                 action = r.get('action', '观望')
                 reason = r.get('reason', '暂无分析')
                 safe_range = r.get('safe_range', 'N/A')
@@ -473,12 +490,10 @@ class AdvancedInvestmentAnalyzer:
                 resistance = r.get('resistance', 'N/A')
                 pattern = r.get('pattern', 'N/A')
 
-                # 趋势图标
-                trend_icons = {'上涨': '�', '下跌': '�', '震荡': '〰️'}
+                trend_icons = {'上涨': '📈', '下跌': '📉', '震荡': '〰️'}
                 icon = trend_icons.get(trend, '❓')
 
-                # 组装卡片
-                report_lines.append(f"{icon} **{code} {action}** | {trend}")
+                report_lines.append(f"{icon} **{name}({code}) {action}** | {trend}")
                 report_lines.append(f"   💡 **建议**: {reason}")
                 report_lines.append(f"   🛡️ **安全**: {safe_range} | ⚠️ **警惕**: {risk_alert}")
                 report_lines.append(f"   📐 **点位**: 支撑{support} | 压力{resistance}")
@@ -520,79 +535,85 @@ class AdvancedInvestmentAnalyzer:
             await msg.edit_text(f"🤖 **{model_name.upper()} 回复:**\n\n{response}")
 
     async def backtest_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE, days=None, strategy=None):
-        """处理回测命令"""
+        """处理回测命令 (修复命令行参数覆盖逻辑 + 展示 A 股 T+1 仿真详情)"""
         try:
-            # 解析参数
-            if days is None:
-                days = 30  # 默认回测30天
-            if strategy is None:
-                strategy = 'hold_3_days'  # 默认策略
-
-            # 如果从命令行传递了参数，覆盖默认值
-            if context.args and days is None:
+            # 优先解析命令行参数（仅在未通过快捷指令固定传入时覆盖）
+            if context and getattr(context, 'args', None):
                 for arg in context.args:
-                    if arg.isdigit():
+                    if arg.isdigit() and days is None:
                         days = int(arg)
-                    elif arg in ['hold_3_days', 'hold_5_days', 'stop_loss_5', 'target_profit_10']:
+                    elif arg in ['hold_3_days', 'hold_5_days', 'stop_loss_5', 'target_profit_10'] and strategy is None:
                         strategy = arg
 
-            # 发送开始消息
+            if days is None:
+                days = 30
+            if strategy is None:
+                strategy = 'hold_3_days'
+
             msg = await update.message.reply_text(
-                f"🔬 **开始回测**\n\n"
-                f"📅 时间范围: 最近{days}天\n"
-                f"📊 策略: {strategy}\n\n"
-                f"⏳ 预计需要1-3分钟，请稍候..."
+                f"🔬 **开始 A 股 T+1 仿真回测**\n\n"
+                f"📅 时间范围: 最近 {days} 天\n"
+                f"📊 策略: `{strategy}` (含次日开盘滑点 + T+1锁仓 + 涨跌停校验)\n\n"
+                f"⏳ 正在通过东方财富高速行情计算，请稍候...",
+                parse_mode=ParseMode.MARKDOWN
             )
 
-            # 运行回测
             result = await self.backtester.run_backtest(days=days, strategy=strategy)
 
             if 'error' in result:
                 await msg.edit_text(f"❌ 回测失败: {result['error']}")
                 return
 
-            # 生成报告
-            report = f"""📊 **回测报告**
+            by_type = result.get('by_signal_type', {})
+            bull_info = by_type.get('positive', {})
+            bear_info = by_type.get('negative', {})
+            type_lines = ""
+            if bull_info:
+                type_lines += f"🚀 看多信号(做多): {bull_info.get('total', 0)}笔 | 胜率 {bull_info.get('win_rate', 0):.1f}% | 均益 {bull_info.get('avg_pct', 0):+.2f}%\n"
+            if bear_info:
+                type_lines += f"🔻 看空信号(避雷): {bear_info.get('total', 0)}笔 | 避雷率 {bear_info.get('win_rate', 0):.1f}% | 规避 {bear_info.get('avg_pct', 0):+.2f}%\n"
+
+            report = f"""📊 **A 股 T+1 仿真回测报告**
 
 📅 回测时间: {result['backtest_date']}
-📈 策略: {result['strategy']}
+📈 策略: `{result['strategy']}`
 
 ━━━━━━━━━━━━━━━
-📊 **核心指标**
+📊 **核心指标 (已扣除滑点与一字板)**
 ━━━━━━━━━━━━━━━
-✅ 总信号数: {result['total_signals']}
-🎯 胜率: {result['win_rate']:.1f}%
+✅ 有效成交信号: {result['total_signals']} 笔
+⛔ 涨停排队未成交: {result.get('untradable_count', 0)} 笔
+🎯 综合胜率: {result['win_rate']:.1f}%
 💰 盈亏比: {result['profit_loss_ratio']:.2f}
-📉 最大回撤: {result['max_drawdown']:.2f}%
+📉 单笔最大回撤: {result['max_drawdown']:.2f}%
 📈 累计收益: {result['total_profit']:.2f}%
 
 ━━━━━━━━━━━━━━━
 🎲 **详细统计**
 ━━━━━━━━━━━━━━━
-✅ 盈利笔数: {result['win_count']}
-❌ 亏损笔数: {result['lose_count']}
+✅ 盈利/有效笔数: {result['win_count']}
+❌ 亏损/失效笔数: {result['lose_count']}
 📊 平均盈利: {result['avg_profit']:.2f}%
 📊 平均亏损: {result['avg_loss']:.2f}%
-
+{type_lines}
 ━━━━━━━━━━━━━━━
 💡 **建议**
 ━━━━━━━━━━━━━━━
 """
 
-            # 根据胜率给出建议
             if result['win_rate'] >= 60:
-                report += "✅ 胜率优秀，策略有效！"
+                report += "✅ 胜率优秀，策略在 A 股 T+1 下表现稳健！"
             elif result['win_rate'] >= 45:
-                report += "⚠️ 胜率一般，建议优化参数。"
+                report += "⚠️ 胜率一般，建议结合乖离率进一步严控追高。"
             else:
-                report += "❌ 胜率偏低，建议重新设计策略。"
+                report += "❌ 胜率偏低，建议提高置信度阈值或缩短持仓周期。"
 
             if result['profit_loss_ratio'] >= 1.5:
-                report += "\n✅ 盈亏比健康，风险控制良好。"
+                report += "\n✅ 盈亏比健康，风险收益结构良好。"
             elif result['profit_loss_ratio'] >= 1.0:
-                report += "\n⚠️ 盈亏比一般，注意止损。"
+                report += "\n⚠️ 盈亏比一般，注意严格执行止损位。"
             else:
-                report += "\n❌ 盈亏比过低，需要优化止盈止损。"
+                report += "\n❌ 盈亏比过低，谨防高开低走兑现行情。"
 
             await msg.edit_text(report, parse_mode=ParseMode.MARKDOWN)
 
@@ -645,105 +666,103 @@ class AdvancedInvestmentAnalyzer:
         )
 
     async def check_api_usage_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """检查API使用情况"""
-        await update.message.reply_text("🔍 正在查询 API 使用情况...", parse_mode=ParseMode.MARKDOWN)
+        """检查API使用情况 (DeepSeek / OpenAI-GPT / Gemini / Kimi / Qwen)"""
+        await update.message.reply_text("🔍 正在查询多模型 API 状态...", parse_mode=ParseMode.MARKDOWN)
 
-        # 获取API Keys
-        gemini_keys = self.llm_analyzer.gemini_keys[:5]  # 只检查前5个
-        qwen_key = self.llm_analyzer.qwen_key
+        gemini_keys = self.llm_analyzer.gemini_keys[:5]
+        openai_key = self.llm_analyzer.openai_key
         deepseek_key = self.llm_analyzer.deepseek_key
+        kimi_key = self.llm_analyzer.kimi_key
+        qwen_key = self.llm_analyzer.qwen_key
 
         tz = pytz.timezone('Asia/Shanghai')
         now = datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')
 
-        msg = f"📊 **API 使用情况**\n\n"
+        msg = f"📊 **多模型路由器 API 状态 (v2.0)**\n\n"
         msg += f"⏰ 查询时间: {now}\n\n"
 
-        # 检查 Gemini
-        msg += "🤖 **Gemini API**\n"
-        gemini_working = 0
-        for i, key in enumerate(gemini_keys, 1):
-            try:
-                url = f"https://generativelanguage.googleapis.com/v1beta/models?key={key}"
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(url, timeout=5) as resp:
-                        if resp.status == 200:
-                            gemini_working += 1
-                        elif resp.status == 429:
-                            pass
-            except:
-                pass
-
-        if gemini_working > 0:
-            msg += f"✅ 可用: {gemini_working}/{len(gemini_keys)} Keys\n"
-        else:
-            msg += f"❌ 所有 Keys 配额用尽\n"
-
-        # 检查 Qwen
-        msg += "\n🧠 **Qwen API**\n"
-        if qwen_key:
-            try:
-                url = "https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation"
-                headers = {"Authorization": f"Bearer {qwen_key}", "Content-Type": "application/json"}
-                payload = {
-                    "model": "qwen-plus",
-                    "input": {"messages": [{"role": "user", "content": "hi"}]},
-                    "parameters": {"max_tokens": 5}
-                }
-
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(url, json=payload, headers=headers, timeout=5) as resp:
-                        if resp.status == 200:
-                            msg += "✅ 正常工作\n"
-                        elif resp.status == 429:
-                            msg += "⚠️ 配额用尽 (HTTP 429)\n"
-                        else:
-                            msg += f"❌ HTTP {resp.status}\n"
-            except Exception as e:
-                msg += f"❌ 错误: {str(e)[:50]}\n"
-        else:
-            msg += "❌ 未配置\n"
-
-        # 检查 DeepSeek
-        msg += "\n🔮 **DeepSeek API**\n"
+        # 1. 检查 DeepSeek
+        msg += "🔮 **DeepSeek API (主力推理)**\n"
         if deepseek_key:
             try:
-                url = "https://api.deepseek.com/chat/completions"
+                url = f"{self.llm_analyzer.deepseek_base.rstrip('/')}/chat/completions"
                 headers = {"Authorization": f"Bearer {deepseek_key}", "Content-Type": "application/json"}
                 payload = {
-                    "model": "deepseek-chat",
+                    "model": self.llm_analyzer.deepseek_model,
                     "messages": [{"role": "user", "content": "hi"}],
                     "max_tokens": 5
                 }
-
                 async with aiohttp.ClientSession() as session:
-                    async with session.post(url, json=payload, headers=headers, timeout=5) as resp:
+                    async with session.post(url, json=payload, headers=headers, timeout=6) as resp:
                         if resp.status == 200:
                             msg += "✅ 正常工作\n"
                         elif resp.status == 429:
-                            msg += "⚠️ 配额用尽 (HTTP 429)\n"
+                            msg += "⚠️ 配额/并发受限 (HTTP 429)\n"
                         else:
                             msg += f"❌ HTTP {resp.status}\n"
             except Exception as e:
-                msg += f"❌ 错误: {str(e)[:50]}\n"
+                msg += f"❌ 错误: {str(e)[:40]}\n"
         else:
-            msg += "❌ 未配置\n"
+            msg += "⚪ 未配置\n"
 
-        # 检查 Kimi
-        msg += "\n🛰️ **Kimi API**\n"
-        if self.llm_analyzer.kimi_key:
-            msg += "✅ 已配置 (fallback)\n"
+        # 2. 检查 OpenAI / GPT
+        msg += f"\n🧠 **OpenAI / GPT API ({self.llm_analyzer.openai_model})**\n"
+        if openai_key:
+            try:
+                url = f"{self.llm_analyzer.openai_base.rstrip('/')}/chat/completions"
+                headers = {"Authorization": f"Bearer {openai_key}", "Content-Type": "application/json"}
+                payload = {
+                    "model": self.llm_analyzer.openai_model,
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "max_tokens": 5
+                }
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(url, json=payload, headers=headers, timeout=6) as resp:
+                        if resp.status == 200:
+                            msg += "✅ 正常工作\n"
+                        elif resp.status == 429:
+                            msg += "⚠️ 配额受限 (HTTP 429)\n"
+                        else:
+                            msg += f"❌ HTTP {resp.status}\n"
+            except Exception as e:
+                msg += f"❌ 错误: {str(e)[:40]}\n"
         else:
-            msg += "❌ 未配置\n"
+            msg += "⚪ 未配置\n"
 
-        # 添加说明
-        msg += "\n💡 **提示**:\n"
-        msg += "• Gemini 免费版每天太平洋时间午夜重置\n"
-        msg += "• Qwen/DeepSeek 配额较充足\n"
-        msg += "• `/gemini` 可能会走其他可用Key或自动切换到 Kimi"
-        msg += "\n• 使用 `/status` 查看系统状态"
+        # 3. 检查 Gemini
+        msg += "\n🤖 **Gemini API (研报审阅 & 联网)**\n"
+        if gemini_keys:
+            gemini_working = 0
+            for key in gemini_keys:
+                try:
+                    url = f"https://generativelanguage.googleapis.com/v1beta/models?key={key}"
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(url, timeout=5) as resp:
+                            if resp.status == 200:
+                                gemini_working += 1
+                except Exception:
+                    pass
+            if gemini_working > 0:
+                msg += f"✅ 可用: {gemini_working}/{len(gemini_keys)} Keys\n"
+            else:
+                msg += "❌ 所有 Keys 配额用尽或不可达\n"
+        else:
+            msg += "⚪ 未配置\n"
 
+        # 4. 检查 Kimi
+        msg += "\n🛰️ **Kimi API (高速替补)**\n"
+        if kimi_key:
+            msg += "✅ 已配置就绪\n"
+        else:
+            msg += "⚪ 未配置\n"
+
+        # 5. 检查 Qwen (可选)
+        if qwen_key:
+            msg += "\n🌐 **Qwen API (可选扩展)**: ✅ 已配置\n"
+
+        msg += "\n💡 **路由策略**: DeepSeek ↔ GPT ↔ Gemini ↔ Kimi 全链路自动故障切换"
         await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
+
 
 
 # ================= 指令函数 =================
@@ -781,46 +800,6 @@ async def list_config_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
     await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
 
-async def clear_positions_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """清空持仓列表"""
-    analyzer = context.bot_data['analyzer']
-    config = analyzer.llm_analyzer.config
-
-    if not config['my_positions']:
-        await update.message.reply_text("⚠️ 持仓列表已经是空的")
-        return
-
-    cleared_positions = ", ".join(config['my_positions'])
-    config['my_positions'] = []
-    analyzer.llm_analyzer.save_config()
-
-    await update.message.reply_text(f"🗑️ 已清空持仓列表：{cleared_positions}\n\n💡 现在可以添加A股代码了\n例如：`/add 600519`", parse_mode=ParseMode.MARKDOWN)
-
-async def autobind_on_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """启用AI自动绑定关键词"""
-    analyzer = context.bot_data['analyzer']
-    config = analyzer.llm_analyzer.config
-    config['auto_bind_keywords'] = True
-    analyzer.llm_analyzer.save_config()
-    await update.message.reply_text(
-        "✅ **AI自动绑定关键词已启用**\n\n"
-        "🔗 现在AI分析新闻时会自动将概念关键词关联到股票\n"
-        "例如：看到'AI芯片'会自动关联到相关股票",
-        parse_mode=ParseMode.MARKDOWN
-    )
-
-async def autobind_off_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """禁用AI自动绑定关键词"""
-    analyzer = context.bot_data['analyzer']
-    config = analyzer.llm_analyzer.config
-    config['auto_bind_keywords'] = False
-    analyzer.llm_analyzer.save_config()
-    await update.message.reply_text(
-        "❌ **AI自动绑定关键词已禁用**\n\n"
-        "💡 你仍然可以手动使用 `/bind 关键词 股票代码` 来绑定",
-        parse_mode=ParseMode.MARKDOWN
-    )
-
 async def bind_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """绑定关键词到股票，支持多种用法"""
     if not context.args:
@@ -840,17 +819,12 @@ async def bind_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     analyzer = context.bot_data['analyzer']
     args = list(context.args)
-
-    # 判断最后一个参数是否是股票代码（数字或字母+数字）
     last_arg = args[-1]
 
-    # 如果最后一个参数包含逗号，说明是多个股票
     if ',' in last_arg:
-        # 用法: /bind 关键词 股票1,股票2,股票3
-        keywords = args[:-1]  # 前面的都是关键词
+        keywords = args[:-1]
         stock_codes = last_arg.split(',')
 
-        # 如果只有一个关键词
         if len(keywords) == 1:
             keyword = keywords[0]
             bound_stocks = []
@@ -869,9 +843,7 @@ async def bind_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ 参数错误：多个关键词只能绑定到一只股票", parse_mode=ParseMode.MARKDOWN)
         return
 
-    # 判断第一个参数是否包含逗号（多个关键词）
     if ',' in args[0]:
-        # 用法: /bind 关键词1,关键词2,关键词3 股票代码
         keywords = args[0].split(',')
         stock_code = args[1]
 
@@ -889,7 +861,6 @@ async def bind_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # 默认用法: /bind 关键词 股票代码
     keyword, code = args[0], args[1]
     analyzer.llm_analyzer.bind_keyword(keyword, code)
     await update.message.reply_text(f"🔗 已绑定: `{keyword}` → `{code}`", parse_mode=ParseMode.MARKDOWN)
@@ -935,12 +906,8 @@ async def alert_levels_command(update: Update, context: ContextTypes.DEFAULT_TYP
 
 async def import_keywords_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """导入A股核心关键词库"""
-    import json
-    import os
-
     try:
-        # 读取初始关键词文件
-        initial_keywords_path = '/app/initial_keywords.json'
+        initial_keywords_path = '/app/initial_keywords.json' if os.path.exists('/app/initial_keywords.json') else 'initial_keywords.json'
         if not os.path.exists(initial_keywords_path):
             await update.message.reply_text(
                 "❌ 初始关键词文件不存在\n\n"
@@ -1293,8 +1260,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 🧠 **AI对话**
 ━━━━━━━━━━━━━━━
 `/deepseek [问题]` - 问DeepSeek
+`/gpt [问题]` - 问OpenAI (GPT)
 `/gemini [问题]` - 问Gemini
-`/qwen [问题]` - 问Qwen
+`/kimi [问题]` - 问Kimi
 
 ━━━━━━━━━━━━━━━
 ⚙️ **高级功能** (隐藏命令)
@@ -1309,8 +1277,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 💡 **快速上手**
 ━━━━━━━━━━━━━━━
 1. `/add 600519` (添加茅台)
-2. `/analyze` (分析持仓)
-3. `/backtest_30d` (回测30天)
+2. `/analyze` (巡逻分析新闻)
+3. `/holdings` (诊断持仓走势)
+4. `/backtest_30d` (A股T+1回测30天)
 """
     await update.message.reply_text(help_text, parse_mode=ParseMode.MARKDOWN)
 
@@ -1332,14 +1301,18 @@ async def futures_command(u, c):
 async def status_command(u, c):
     analyzer = c.bot_data['analyzer']
     ds_status = "✅ 就绪" if analyzer.llm_analyzer.deepseek_key else "❌ 未配置"
+    gpt_status = "✅ 就绪" if analyzer.llm_analyzer.openai_key else "❌ 未配置"
     gemini_keys_count = len(analyzer.llm_analyzer.gemini_keys)
     gemini_status = f"✅ 就绪 ({gemini_keys_count} Keys)" if gemini_keys_count > 0 else "❌ 未配置"
+    kimi_status = "✅ 就绪" if analyzer.llm_analyzer.kimi_key else "❌ 未配置"
     redis_status = "✅ 已连接" if analyzer.redis_client else "❌ 断开"
-    server_label = os.getenv("SERVER_LABEL", "Unraid (Local)")
-    msg = f"""🏥 **系统状态诊断**
+    server_label = os.getenv("SERVER_LABEL", "Oracle Cloud ARM64")
+    msg = f"""🏥 **系统状态诊断 (v2.0)**
 
 🧠 **DeepSeek**: {ds_status}
+🤖 **OpenAI (GPT)**: {gpt_status}
 ⚖️ **Gemini**: {gemini_status}
+🌙 **Kimi**: {kimi_status}
 💾 **Redis**: {redis_status}
 📍 **Server**: {server_label}"""
     await u.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
@@ -1351,13 +1324,14 @@ async def post_init(app):
     # 🔥 菜单 (含 ValueCell 新功能)
     commands = [
         BotCommand("start", "📖 使用说明"),
-        BotCommand("analyze", "🔍 分析持仓"),
+        BotCommand("analyze", "🔍 巡逻分析新闻"),
+        BotCommand("holdings", "📊 持仓走势会诊"),
         BotCommand("research", "🔬 深度研究"),
         BotCommand("deepnews", "📰 智能新闻"),
         BotCommand("add", "➕ 添加持仓"),
         BotCommand("del", "➖ 删除持仓"),
         BotCommand("list", "📋 查看配置"),
-        BotCommand("backtest", "📊 回测系统"),
+        BotCommand("backtest", "📊 T+1回测系统"),
         BotCommand("status", "💊 系统状态"),
         BotCommand("deepseek", "🧠 AI对话"),
     ]
@@ -1369,7 +1343,7 @@ async def post_init(app):
         try:
             await app.bot_data['analyzer'].telegram_bot.send_message(
                 chat_id=app.bot_data['analyzer'].chat_id,
-                text="🚀 机器人重启完成！\n✅ 系统已升级"
+                text="🚀 机器人重启完成！\n✅ A股事件驱动量化系统 v2.0 已就绪"
             )
             _startup_notification_sent = True
         except Exception as e:
@@ -1408,6 +1382,9 @@ def run_bot():
             app.add_handler(CommandHandler('alert_levels', alert_levels_command))
             app.add_handler(CommandHandler('bind', bind_command))
             app.add_handler(CommandHandler('deepseek', chat_handler_wrapper))
+            app.add_handler(CommandHandler('gpt', chat_handler_wrapper))
+            app.add_handler(CommandHandler('openai', chat_handler_wrapper))
+            app.add_handler(CommandHandler('kimi', chat_handler_wrapper))
             app.add_handler(CommandHandler('qwen', chat_handler_wrapper))
             app.add_handler(CommandHandler('gemini', chat_handler_wrapper))
             

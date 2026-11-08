@@ -8,12 +8,12 @@ yfinance
 newspaper3k
 feedparser
 lxml_html_clean
+beautifulsoup4
 requests
-chromadb
 openai
-pysqlite3-binary
 akshare
 pandas
+numpy
 streamlit>=1.28.0
 plotly>=5.18.0
 mplfinance>=0.12.9b7
