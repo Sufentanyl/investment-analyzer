@@ -347,12 +347,13 @@ class LLMAnalyzer:
         return os.path.join(os.getcwd(), 'data', 'user_config.json')
 
     def _load_yaml_config(self):
-        default_conf = {
+        merged = {
             "my_positions": [],
             "concept_db": {},
             "agents": DEFAULT_ASHARE_AGENTS.copy(),
             "auto_bind_keywords": True,
-            "alert_levels_to_push": ["strong", "normal"]
+            "alert_levels_to_push": ["strong", "normal"],
+            "notify_config": {},
         }
         if os.path.exists(self.config_path):
             try:
@@ -361,9 +362,7 @@ class LLMAnalyzer:
                     if 'positions' in data:
                         data['my_positions'] = data['positions'].get('watching', [])
                         data['concept_db'] = data['positions'].get('keywords', {})
-                    if not data.get('agents') or 'bull_agent' not in data.get('agents', {}):
-                        data['agents'] = DEFAULT_ASHARE_AGENTS.copy()
-                    return data
+                    merged.update(data)
             except Exception as e:
                 logger.error(f"❌ 读取 config.yaml 失败: {e}")
 
@@ -371,13 +370,22 @@ class LLMAnalyzer:
         if os.path.exists(json_path):
             try:
                 with open(json_path, 'r', encoding='utf-8') as f:
-                    data = json.load(f) or {}
-                    if not data.get('agents') or 'bull_agent' not in data.get('agents', {}):
-                        data['agents'] = DEFAULT_ASHARE_AGENTS.copy()
-                    return data
+                    json_data = json.load(f) or {}
+                    # JSON 用户动态配置优先覆盖 YAML 静态配置
+                    for k, v in json_data.items():
+                        if v is not None:
+                            merged[k] = v
             except Exception as e:
                 logger.warning(f"读取 JSON 配置失败: {e}")
-        return default_conf
+
+        if not merged.get('agents') or 'bull_agent' not in merged.get('agents', {}):
+            merged['agents'] = DEFAULT_ASHARE_AGENTS.copy()
+        return merged
+
+    def reload_config(self):
+        """重新从磁盘加载最新用户配置（供 Web 控制台修改后同步）"""
+        self.config = self._load_yaml_config()
+        return self.config
 
     def save_config(self, config=None):
         """保存用户配置"""
@@ -921,11 +929,10 @@ class LLMAnalyzer:
             return ""
 
     async def _send_fallback_notification(self, api_name: str, reason: str):
-        """发送API切换通知到Telegram"""
-        if not self.telegram_bot or not self.chat_id:
-            return
-
+        """发送 API 切换通知到统一消息通道 (Bark / Webhook / 可选 Telegram)"""
         try:
+            from notifier import UnifiedNotifier
+            notifier = UnifiedNotifier()
             msg = (
                 f"⚠️ **API切换通知**\n\n"
                 f"🔴 {api_name} API异常\n"
@@ -933,14 +940,9 @@ class LLMAnalyzer:
                 f"✅ 已自动切换到备用模型\n"
                 f"⏰ {datetime.now(pytz.timezone('Asia/Shanghai')).strftime('%H:%M')}"
             )
-            if ParseMode:
-                await self.telegram_bot.send_message(
-                    chat_id=self.chat_id, text=msg, parse_mode=ParseMode.MARKDOWN
-                )
-            else:
-                await self.telegram_bot.send_message(chat_id=self.chat_id, text=msg)
+            await notifier.send(msg, title=f"⚠️ {api_name} 自动切换备用模型", level="passive")
         except Exception as e:
-            logger.error(f"发送Telegram通知失败: {e}")
+            logger.error(f"发送 API 切换通知失败: {e}")
 
     async def _call_gemini_json(self, prompt: str) -> Dict:
         text = await self._call_gemini_text(prompt + "\n请务必只输出 JSON，不要 Markdown。")

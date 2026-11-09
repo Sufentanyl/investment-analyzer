@@ -25,6 +25,7 @@ from news_collector import AdvancedNewsCollector
 from information_gap_detector import InformationGapDetector
 from futures_watcher import FuturesWatcher
 from backtest import LightweightBacktester
+from notifier import UnifiedNotifier
 
 # 配置日志 (兼容容器内 /app/logs 与本地 ./logs)
 _log_dir = '/app/logs' if (os.path.exists('/app/logs') or os.access('/app', os.W_OK)) else os.path.join(os.getcwd(), 'logs')
@@ -42,30 +43,33 @@ logger = logging.getLogger(__name__)
 # 🔥 全局标志：防止重复发送启动通知
 _startup_notification_sent = False
 
-# 🔥 死前遗言发送函数
+# 🔥 死前遗言发送函数 (支持 Bark / Webhook / Telegram)
 async def send_death_notification(token, chat_id, error_msg):
     try:
-        if token and chat_id:
-            # 创建临时 Bot 实例发送报警
-            t_request = HTTPXRequest(connect_timeout=10.0, read_timeout=10.0)
-            bot = Bot(token=token, request=t_request)
-            await bot.send_message(chat_id=chat_id, text=f"☠️ **严重警告**：系统崩溃已停止运行！\n\n错误信息：{error_msg}")
+        notifier = UnifiedNotifier()
+        await notifier.send(
+            f"☠️ **严重警告**：系统崩溃已停止运行！\n\n错误信息：{error_msg}",
+            title="☠️ A股量化系统严重告警",
+            level="critical",
+        )
     except Exception as e:
         logger.error(f"发送死亡通知失败: {e}") 
 
 class AdvancedInvestmentAnalyzer:
     def __init__(self):
-        token = os.getenv('TELEGRAM_BOT_TOKEN')
-        if not token: raise ValueError("TELEGRAM_BOT_TOKEN 缺失")
-        
-        # 增加超时宽容度
-        t_request = HTTPXRequest(connect_timeout=20.0, read_timeout=20.0)
-        self.telegram_bot = Bot(token=token, request=t_request)
-        self.chat_id = os.getenv('TELEGRAM_CHAT_ID')
+        token = (os.getenv('TELEGRAM_BOT_TOKEN') or '').strip()
+        disable_tg = os.getenv('DISABLE_TELEGRAM', '0') == '1'
+        self.chat_id = (os.getenv('TELEGRAM_CHAT_ID') or '').strip()
+        self.notifier = UnifiedNotifier()
+
+        if token and token != "your_telegram_bot_token_here" and not disable_tg:
+            t_request = HTTPXRequest(connect_timeout=20.0, read_timeout=20.0)
+            self.telegram_bot = Bot(token=token, request=t_request)
+        else:
+            self.telegram_bot = None
         
         self.news_collector = AdvancedNewsCollector()
         self.llm_analyzer = LLMAnalyzer()
-        # 🔥 新增: 设置Telegram Bot用于发送API切换通知
         self.llm_analyzer.set_telegram_bot(self.telegram_bot, self.chat_id)
         self.gap_detector = InformationGapDetector()
         self.futures_watcher = FuturesWatcher()
@@ -76,6 +80,38 @@ class AdvancedInvestmentAnalyzer:
         
         self.cn_holidays = holidays.CN()
         self.last_manual_analysis = None
+
+    async def _notify_text(
+        self,
+        text: str,
+        chat_id=None,
+        title: str = None,
+        subtitle: str = None,
+        level: str = None,
+        click_url: str = None,
+        parse_mode=None,
+    ):
+        """统一发送通知：优先推送至 Bark (iOS) / Webhook，若启用了 Telegram 则同步发送"""
+        await self.notifier.send(
+            text=text,
+            title=title,
+            subtitle=subtitle,
+            level=level,
+            click_url=click_url,
+        )
+        target_chat_id = chat_id or self.chat_id
+        if self.telegram_bot and target_chat_id:
+            try:
+                await self.telegram_bot.send_message(
+                    chat_id=target_chat_id,
+                    text=text,
+                    parse_mode=parse_mode,
+                )
+            except Exception:
+                try:
+                    await self.telegram_bot.send_message(chat_id=target_chat_id, text=text)
+                except Exception as e2:
+                    logger.debug(f"Telegram 附加发送失败: {e2}")
 
     def _connect_redis(self):
         try:
@@ -153,23 +189,27 @@ class AdvancedInvestmentAnalyzer:
     async def run_analysis(self, update: Update = None, context: ContextTypes.DEFAULT_TYPE = None, is_manual: bool = False):
         try:
             chat_id = update.effective_chat.id if update else self.chat_id
+            # 每次巡检前同步读取 Web 控制台最新保存的持仓与推送配置
+            self.llm_analyzer.reload_config()
 
             # 🔥 修复: 统一使用上海时区
             tz = pytz.timezone('Asia/Shanghai')
             now = datetime.now(tz)
 
             if is_manual and self.last_manual_analysis and now - self.last_manual_analysis < timedelta(minutes=1):
-                await self.telegram_bot.send_message(chat_id=chat_id, text="⏳ 冷却中...请稍候再试")
-                return
+                await self._notify_text("⏳ 冷却中...请稍候再试", chat_id=chat_id, title="⏳ 巡逻冷却中")
+                return []
 
             if is_manual:
-                self.last_manual_analysis = now  # 🔥 修复: 保存带时区的时间
-                await self.telegram_bot.send_message(chat_id=chat_id, text="🚀 正在巡逻最新新闻...")
+                self.last_manual_analysis = now
+                if self.telegram_bot and chat_id:
+                    await self.telegram_bot.send_message(chat_id=chat_id, text="🚀 正在巡逻最新新闻...")
 
             news_list = await self.news_collector.collect_international_news()
             if not news_list:
-                if is_manual: await self.telegram_bot.send_message(chat_id=chat_id, text="📊 暂无新内容")
-                return
+                if is_manual:
+                    await self._notify_text("📊 暂无新内容", chat_id=chat_id, title="📊 巡逻完成")
+                return []
 
             # 🔥 双重去重逻辑 (URL + 标题)
             new_news_items = []
@@ -199,8 +239,9 @@ class AdvancedInvestmentAnalyzer:
                 if title: seen_titles.add(title)
 
             if not new_news_items:
-                if is_manual: await self.telegram_bot.send_message(chat_id=chat_id, text="✅ 所有新闻都已分析过。")
-                return
+                if is_manual:
+                    await self._notify_text("✅ 所有新闻都已分析过。", chat_id=chat_id, title="✅ 巡逻完成")
+                return []
 
             logger.info(f"🔍 发现 {len(new_news_items)} 条新新闻，准备分析...")
 
@@ -236,15 +277,17 @@ class AdvancedInvestmentAnalyzer:
                     logger.info(f"Neutral filtered: {influence} | {news['title']}")
 
             if not potentially_valuable_news:
-                if is_manual: await self.telegram_bot.send_message(chat_id=chat_id, text="⚖️ 本轮新闻经 AI 研判无重大影响。")
-                return
+                if is_manual:
+                    await self._notify_text("⚖️ 本轮新闻经 AI 研判无重大影响。", chat_id=chat_id, title="⚖️ 巡逻完成")
+                return []
 
             logger.info(f"💎 筛选出 {len(potentially_valuable_news)} 条高价值新闻，检测信息差...")
             gap_news = await self.gap_detector.detect_information_gap(potentially_valuable_news)
             
             if not gap_news:
-                if is_manual: await self.telegram_bot.send_message(chat_id=chat_id, text="🔍 高价值新闻国内均已有报道。")
-                return
+                if is_manual:
+                    await self._notify_text("🔍 高价值新闻国内均已有报道。", chat_id=chat_id, title="🔍 巡逻完成")
+                return []
 
             final_results = []
             for news in gap_news:
@@ -292,28 +335,31 @@ class AdvancedInvestmentAnalyzer:
             if final_results:
                 await self.send_report(final_results, chat_id)
             elif is_manual:
-                # 手动触发但没有发现高价值新闻时，通知用户
-                await self.telegram_bot.send_message(
+                await self._notify_text(
+                    "🤷‍♂️ 本次巡逻未发现高价值投资机会\n\n所有新闻的AI评估置信度均低于阈值，暂不推荐。",
                     chat_id=chat_id,
-                    text="🤷‍♂️ 本次巡逻未发现高价值投资机会\n\n所有新闻的AI评估置信度均低于阈值，暂不推荐。"
+                    title="🤷‍♂️ 未发现高确定性机会",
                 )
+            return final_results
 
         except Exception as e:
             logger.error(f"流程出错: {e}", exc_info=True)
             if is_manual:
-                await self.telegram_bot.send_message(chat_id=chat_id, text=f"❌ 运行出错: {str(e)}")
+                await self._notify_text(f"❌ 运行出错: {str(e)}", chat_id=chat_id, title="❌ 巡逻运行异常")
+            return []
 
-    # 🔥🔥 图文合一发送逻辑 🔥🔥
-    async def send_report(self, results, chat_id):
+    # 🔥🔥 多通道战报推送逻辑 (Bark iOS + Webhook + 可选 Telegram) 🔥🔥
+    async def send_report(self, results, chat_id=None):
         for i, (news, analysis) in enumerate(results, 1):
             processing_msg = None
-            try:
-                processing_msg = await self.telegram_bot.send_message(
-                    chat_id=chat_id,
-                    text=f"🤔 正在邀请 Gemini 首席审阅: {news['title'][:20]}..."
-                )
-            except Exception as e:
-                logger.warning(f"发送处理消息失败: {e}")
+            if self.telegram_bot and chat_id:
+                try:
+                    processing_msg = await self.telegram_bot.send_message(
+                        chat_id=chat_id,
+                        text=f"🤔 正在邀请 Gemini 首席审阅: {news['title'][:20]}..."
+                    )
+                except Exception as e:
+                    logger.warning(f"发送处理消息失败: {e}")
 
             final_report = await self.llm_analyzer.generate_gemini_review(news['title'], analysis)
             
@@ -327,16 +373,7 @@ class AdvancedInvestmentAnalyzer:
             event_cluster_id = analysis.get('event_cluster_id')
             event_signature = analysis.get('event_signature')
 
-            memo_lines = []
             if event_memo:
-                memo_lines = [
-                    f"1) 事件原文: {event_memo.get('event_original', news['title'])}",
-                    f"2) 先反应市场: {event_memo.get('market_first_reaction', '待确认')}",
-                    f"3) A股映射池: {event_memo.get('a_share_mapping', '待确认')}",
-                    f"4) 对冲腿: {event_memo.get('hedge_leg', '仅A股交易')}",
-                    f"5) 失效条件: {event_memo.get('failure_conditions', '待确认')}",
-                ]
-
                 try:
                     event_memo['event_cluster_id'] = event_cluster_id
                     event_memo['event_signature'] = event_signature
@@ -349,19 +386,15 @@ class AdvancedInvestmentAnalyzer:
                 except Exception as e:
                     logger.warning(f"保存事件模板失败: {e}")
 
-            # 🔥 新增：AI自动绑定关键词（可开关）
-            if self.llm_analyzer.config.get('auto_bind_keywords', True):  # 默认启用
+            # 🔥 AI自动绑定关键词（可开关）
+            if self.llm_analyzer.config.get('auto_bind_keywords', True):
                 if analysis.get('stock_data'):
                     for stock in analysis['stock_data']:
                         stock_code = stock.get('code', '')
                         if stock_code and concept_str:
-                            # 提取概念关键词（逗号分隔）
                             keywords = [k.strip() for k in concept_str.split(',') if k.strip()]
-                            # AI自动绑定
                             self.llm_analyzer.auto_bind_keywords(keywords, stock_code)
 
-            # 组装完整文案
-            template_label = template_info.get('label')
             alert_keywords = event_memo.get('alert_keywords', '') if isinstance(event_memo, dict) else ''
 
             # 量化评分与实战点位卡片
@@ -375,9 +408,14 @@ class AdvancedInvestmentAnalyzer:
             )
 
             stock_trade_lines = []
+            subtitle_stocks = []
+            has_hold = False
             if analysis.get('stock_data'):
                 for s in analysis['stock_data'][:3]:
+                    if s.get('is_hold'):
+                        has_hold = True
                     hold_badge = " `[持仓]`" if s.get('is_hold') else ""
+                    subtitle_stocks.append(f"{s.get('name', '')}({s.get('code', '')})")
                     stock_trade_lines.append(
                         f"• **{s.get('name', '')}({s.get('code', '')})**{hold_badge}: "
                         f"现价 `{s.get('price', '')}` | 低吸 `{s.get('buy_zone', 'N/A')}` | 止损 `{s.get('stop_loss_price', 'N/A')}`"
@@ -397,44 +435,59 @@ class AdvancedInvestmentAnalyzer:
                 f"⏱️ {datetime.now(pytz.timezone('Asia/Shanghai')).strftime('%H:%M')}"
             )
 
-            if processing_msg:
+            # 1. 发送至 Bark (iOS) / Webhook
+            bark_title = f"{icon} {'[持仓告警] ' if has_hold else ''}{news['title'][:36]}"
+            bark_subtitle = f"板块: {concept_str} | 标的: {', '.join(subtitle_stocks)}" if subtitle_stocks else f"板块: {concept_str} | 置信度 {confidence_effective:.0%}"
+            bark_level = "timeSensitive" if (has_hold or confidence_effective >= 0.78) else "active"
+            await self.notifier.send(
+                text=full_msg,
+                title=bark_title,
+                subtitle=bark_subtitle,
+                level=bark_level,
+                click_url=news.get('url'),
+            )
+
+            # 2. 若启用了 Telegram，发送图文卡片
+            if processing_msg and self.telegram_bot and chat_id:
                 try:
                     await self.telegram_bot.delete_message(chat_id=chat_id, message_id=processing_msg.message_id)
                 except Exception as e:
                     logger.warning(f"删除处理消息失败: {e}")
-            
-            # 寻找可用的图片
-            chart_to_send = None
-            if analysis.get('stock_data'):
-                for stock in analysis['stock_data']:
-                    if stock.get('chart'):
-                        chart_to_send = stock['chart']
-                        break # 只发一张图
-            
-            try:
-                if chart_to_send:
-                    chart_to_send.seek(0)
-                    await self.telegram_bot.send_photo(
-                        chat_id=chat_id,
-                        photo=chart_to_send,
-                        caption=full_msg,
-                        parse_mode=ParseMode.MARKDOWN
-                    )
-                else:
-                    await self.telegram_bot.send_message(chat_id=chat_id, text=full_msg, parse_mode=ParseMode.MARKDOWN)
 
-            except Exception as e:
-                logger.error(f"发送失败 (可能文本太长或Markdown错误): {e}")
+            if self.telegram_bot and chat_id:
+                chart_to_send = None
+                if analysis.get('stock_data'):
+                    for stock in analysis['stock_data']:
+                        if stock.get('chart'):
+                            chart_to_send = stock['chart']
+                            break
                 try:
-                    await self.telegram_bot.send_message(chat_id=chat_id, text=full_msg)
-                except Exception as e2:
-                    logger.error(f"发送纯文本也失败: {e2}")
+                    if chart_to_send:
+                        chart_to_send.seek(0)
+                        await self.telegram_bot.send_photo(
+                            chat_id=chat_id,
+                            photo=chart_to_send,
+                            caption=full_msg,
+                            parse_mode=ParseMode.MARKDOWN
+                        )
+                    else:
+                        await self.telegram_bot.send_message(chat_id=chat_id, text=full_msg, parse_mode=ParseMode.MARKDOWN)
+                except Exception as e:
+                    logger.error(f"Telegram 发送失败: {e}")
+                    try:
+                        await self.telegram_bot.send_message(chat_id=chat_id, text=full_msg)
+                    except Exception:
+                        pass
 
     async def report_futures(self):
-        if not self.chat_id: return
         try:
             data = await asyncio.to_thread(self.futures_watcher.get_iron_ore_data)
-            await self.telegram_bot.send_message(chat_id=self.chat_id, text=f"🌅 **早盘期货哨兵**\n{data}", parse_mode=ParseMode.MARKDOWN)
+            await self._notify_text(
+                f"🌅 **早盘期货哨兵**\n{data}",
+                chat_id=self.chat_id,
+                title="🌅 早盘期货哨兵",
+                parse_mode=ParseMode.MARKDOWN,
+            )
         except Exception as e:
             logger.error(f"期货播报错误: {e}")
 
@@ -453,8 +506,9 @@ class AdvancedInvestmentAnalyzer:
         """📊 分析持仓股票走势"""
         try:
             chat_id = update.effective_chat.id if update else self.chat_id
+            self.llm_analyzer.reload_config()
 
-            if is_manual:
+            if is_manual and self.telegram_bot and chat_id:
                 await self.telegram_bot.send_message(chat_id=chat_id, text="📊 正在分析持仓股票走势...")
 
             # 获取持仓列表
@@ -462,16 +516,16 @@ class AdvancedInvestmentAnalyzer:
 
             if not my_positions:
                 if is_manual:
-                    await self.telegram_bot.send_message(chat_id=chat_id, text="📭 暂无持仓股票，请先用 /add 添加持仓")
-                return
+                    await self._notify_text("📭 暂无持仓股票，请先在 Web 控制台添加持仓", chat_id=chat_id, title="📭 暂无持仓")
+                return []
 
             # 调用分析
             results = await self.llm_analyzer.analyze_holdings_trend(my_positions)
 
             if not results:
                 if is_manual:
-                    await self.telegram_bot.send_message(chat_id=chat_id, text="❌ 持仓股票分析失败，请查看日志")
-                return
+                    await self._notify_text("❌ 持仓股票分析失败，请查看日志", chat_id=chat_id, title="❌ 持仓分析失败")
+                return []
 
             # 构建报告
             report_lines = ["📊 **持仓股票走势分析**\n"]
@@ -504,21 +558,22 @@ class AdvancedInvestmentAnalyzer:
 
             full_msg = "\n".join(report_lines)
 
-            try:
-                await self.telegram_bot.send_message(chat_id=chat_id, text=full_msg, parse_mode=ParseMode.MARKDOWN)
-            except Exception as e:
-                logger.error(f"发送失败 (可能文本太长或Markdown错误): {e}")
-                try:
-                    await self.telegram_bot.send_message(chat_id=chat_id, text=full_msg)
-                except Exception as e2:
-                    logger.error(f"发送纯文本也失败: {e2}")
+            await self._notify_text(
+                full_msg,
+                chat_id=chat_id,
+                title=f"📊 持仓走势会诊 ({len(results)}只)",
+                level="timeSensitive",
+                parse_mode=ParseMode.MARKDOWN,
+            )
 
             logger.info(f"✅ 持仓分析完成，分析 {len(results)} 只股票")
+            return results
 
         except Exception as e:
             logger.error(f"持仓分析任务失败: {e}")
             import traceback
             logger.error(traceback.format_exc())
+            return []
 
     async def chat_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not context.args:
@@ -1339,22 +1394,71 @@ async def post_init(app):
 
     # 🔥 防止重复发送启动通知
     global _startup_notification_sent
-    if app.bot_data['analyzer'].chat_id and not _startup_notification_sent:
+    if not _startup_notification_sent:
         try:
-            await app.bot_data['analyzer'].telegram_bot.send_message(
-                chat_id=app.bot_data['analyzer'].chat_id,
-                text="🚀 机器人重启完成！\n✅ A股事件驱动量化系统 v2.0 已就绪"
+            await app.bot_data['analyzer']._notify_text(
+                "🚀 机器人重启完成！\n✅ A股事件驱动量化系统 v2.0 已就绪",
+                title="🚀 A股量化哨兵已启动",
+                level="active",
             )
             _startup_notification_sent = True
         except Exception as e:
             logger.warning(f"发送重启通知失败: {e}")
 
+
+async def _run_standalone_daemon():
+    """
+    独立后台守护模式（无需 Telegram Bot）：
+    运行定时巡逻、盘前海外映射、早盘期货播报与持仓走势会诊，通过 Bark (iOS) / Webhook 推送结果，
+    所有交互操作由 Streamlit Web 控制台 (dashboard.py) 完成。
+    """
+    global _startup_notification_sent
+    analyzer = AdvancedInvestmentAnalyzer()
+    analyzer.start_scheduler()
+    status = analyzer.notifier.get_status_summary()
+    channels_str = ", ".join(status["active_channels"]) if status["active_channels"] else "仅 Web 控制台 (可在网页『推送与系统设置』中绑定 Bark)"
+    logger.info(f"🚀 独立量化守护进程已启动 | 活跃推送通道: {channels_str}")
+
+    if not _startup_notification_sent:
+        try:
+            await analyzer.notifier.send(
+                f"🚀 A股事件驱动量化系统 v2.0 已启动\n📲 推送通道: {channels_str}\n🖥️ 请通过 Web 控制台管理持仓、手动巡逻与回测",
+                title="🚀 A股量化哨兵已就绪",
+                level="active",
+            )
+            _startup_notification_sent = True
+        except Exception as e:
+            logger.warning(f"发送启动通知失败: {e}")
+
+    # 保持事件循环常驻
+    stop_event = asyncio.Event()
+    await stop_event.wait()
+
+
 def run_bot():
-    token = os.getenv('TELEGRAM_BOT_TOKEN')
-    chat_id = os.getenv('TELEGRAM_CHAT_ID')
+    token = (os.getenv('TELEGRAM_BOT_TOKEN') or '').strip()
+    chat_id = (os.getenv('TELEGRAM_CHAT_ID') or '').strip()
+    disable_tg = os.getenv('DISABLE_TELEGRAM', '0') == '1'
 
     while True:
         try:
+            # 检查 Web 控制台是否显式关闭了 Telegram
+            notifier = UnifiedNotifier()
+            notify_cfg = notifier._load_notify_config()
+            tg_enabled_in_cfg = notify_cfg.get("telegram_enabled", True)
+
+            use_telegram_bot = (
+                bool(token)
+                and token != "your_telegram_bot_token_here"
+                and not disable_tg
+                and tg_enabled_in_cfg
+            )
+
+            if not use_telegram_bot:
+                logger.info("📲 未启用 Telegram Bot，进入【Bark / Webhook 推送 + Web 控制台】独立守护模式...")
+                asyncio.run(_run_standalone_daemon())
+                break
+
             t_request = HTTPXRequest(connect_timeout=20.0, read_timeout=20.0)
             
             analyzer = AdvancedInvestmentAnalyzer()
@@ -1395,9 +1499,6 @@ def run_bot():
             
             logger.info("🤖 机器人主程序正在启动...")
             
-            # 🔥 启动时清理一次旧数据 (保留90天)
-            #analyzer.db.prune_old_data(days_to_keep=90)
-            
             app.run_polling(drop_pending_updates=True, close_loop=False)
             
         except KeyboardInterrupt:
@@ -1405,11 +1506,7 @@ def run_bot():
             break
         except Exception as e:
             logger.error(f"💥 主程序发生严重崩溃: {e}", exc_info=True)
-            
-            # 🔥 发送崩溃报警
-            if token and chat_id:
-                asyncio.run(send_death_notification(token, chat_id, str(e)))
-            
+            asyncio.run(send_death_notification(token, chat_id, str(e)))
             logger.info("🔄 10秒后尝试自动重启...")
             time.sleep(10)
 

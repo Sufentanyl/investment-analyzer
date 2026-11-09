@@ -1,4 +1,7 @@
-import akshare as ak
+try:
+    import akshare as ak
+except ImportError:
+    ak = None
 import logging
 import requests  # 引入 requests 直接抓取
 import re
@@ -12,31 +15,34 @@ class FuturesWatcher:
     def get_iron_ore_data(self):
         report = []
         
-        # --- 1. 大连铁矿石 (DCE) - 使用 AkShare ---
+        # --- 1. 大连铁矿石 (DCE) ---
         try:
-            # symbol="I0" 代表铁矿石主力连续
-            df_dce = ak.futures_zh_spot(symbol="I0", market="CF", adjust='0')
-            
-            if df_dce is not None and not df_dce.empty:
-                row = df_dce.iloc[0]
-                price = row.get('current_price')
-                
-                # 尝试获取涨跌幅，如果没有则不显示
-                # AkShare 返回的列名可能是 '涨跌幅'
-                change_str = ""
-                for col in df_dce.columns:
-                    if '涨跌' in str(col):
-                        change = row[col]
-                        icon = "🔴" if float(change) > 0 else "🟢"
-                        change_str = f"({change}%) {icon}"
-                        break
-                
-                report.append(f"🔩 **大连铁矿 (主力)**: {price} {change_str}")
-            else:
+            dce_ok = False
+            if ak is not None:
+                df_dce = ak.futures_zh_spot(symbol="I0", market="CF", adjust='0')
+                if df_dce is not None and not df_dce.empty:
+                    row = df_dce.iloc[0]
+                    price = row.get('current_price')
+                    change_str = ""
+                    for col in df_dce.columns:
+                        if '涨跌' in str(col):
+                            change = row[col]
+                            icon = "🔴" if float(change) > 0 else "🟢"
+                            change_str = f"({change}%) {icon}"
+                            break
+                    report.append(f"🔩 **大连铁矿 (主力)**: {price} {change_str}")
+                    dce_ok = True
+            if not dce_ok:
+                resp = requests.get("http://hq.sinajs.cn/list=nf_I0", headers={'Referer': 'https://finance.sina.com.cn/'}, timeout=5)
+                if resp.status_code == 200 and '="' in resp.text:
+                    parts = resp.text.split('="')[1].split('"')[0].split(',')
+                    if len(parts) > 8 and parts[8]:
+                        report.append(f"🔩 **大连铁矿 (主力)**: {parts[8]}")
+                        dce_ok = True
+            if not dce_ok:
                 report.append("⚠️ 大连铁矿: 暂无数据 (可能休市)")
 
         except Exception as e:
-            # 简化报错日志
             logger.warning(f"DCE 获取异常: {str(e)[:50]}")
             report.append(f"⚠️ 大连铁矿: 获取失败")
 
