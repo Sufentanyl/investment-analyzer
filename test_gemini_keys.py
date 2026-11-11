@@ -1,7 +1,8 @@
+import os
 import asyncio
 import aiohttp
 
-GEMINI_API_KEY = '***REMOVED***,***REMOVED***,***REMOVED***,***REMOVED***,***REMOVED***'
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')  # 从环境变量读取，勿写入真实 Key
 
 async def check_gemini_keys():
     keys = [k.strip() for k in GEMINI_API_KEY.split(',')]

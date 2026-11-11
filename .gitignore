@@ -2,8 +2,13 @@
 # 敏感配置文件（绝对不能上传）
 # ========================================
 .env
+.env.*
+!.env.example
 .env.local
 .env.*.local
+*.pem
+*_key
+*.key
 config.yaml
 config.yml
 user_config.json

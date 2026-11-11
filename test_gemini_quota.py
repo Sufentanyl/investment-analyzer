@@ -1,8 +1,9 @@
+import os
 import asyncio
 import aiohttp
 import random
 
-GEMINI_API_KEY = '***REMOVED***,***REMOVED***,***REMOVED***,***REMOVED***,***REMOVED***'
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')  # 从环境变量读取，勿写入真实 Key
 GEMINI_MODEL = 'gemini-3-flash-preview'
 
 async def test_single_key(key, index):

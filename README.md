@@ -295,7 +295,7 @@ KIMI_DAILY_LIMIT=15  # 每日请求限制
 SERPAPI_KEY=你的SerpApi_Key
 
 # Streamlit Dashboard
-DASHBOARD_PASSWORD=123456  # Dashboard访问密码
+DASHBOARD_PASSWORD=change_me_to_a_strong_password  # Dashboard访问密码
 
 # 服务器标签
 SERVER_LABEL=Unraid (Local 192.168.3.110)

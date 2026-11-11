@@ -4,7 +4,7 @@ import random
 import os
 
 # 从环境变量或直接设置
-GEMINI_API_KEY = '***REMOVED***,***REMOVED***,***REMOVED***,***REMOVED***,***REMOVED***'
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')  # 从环境变量读取，勿写入真实 Key
 GEMINI_MODEL = 'gemini-3-flash-preview'  # 正确的模型名称
 
 async def test_gemini_basic():

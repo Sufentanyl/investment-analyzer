@@ -1,13 +1,13 @@
 #!/bin/bash
 # ========================================
 # 一键更新所有项目
-# VPS: ***REMOVED***
+# VPS: <YOUR_VPS_IP>
 # 项目: investment-analyzer + media-brain
 # ========================================
 
 echo "========================================"
 echo "  Auto Update All Projects"
-echo "  VPS: ***REMOVED***"
+echo "  VPS: <YOUR_VPS_IP>"
 echo "========================================"
 echo ""
 

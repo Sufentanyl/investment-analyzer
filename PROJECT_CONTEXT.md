@@ -2,7 +2,7 @@
 
 **最后更新**: 2026-01-24
 **项目状态**: 🟢 运行正常 + ValueCell AI 集成
-**VPS地址**: ***REMOVED***
+**VPS地址**: <YOUR_VPS_IP>
 **作者背景**: 编程小白，在AI助手帮助下完成
 **重大更新**: ValueCell 多智能体深度研究集成 (2026-01-24)
 
@@ -33,7 +33,7 @@ AI驱动的A股量化投资助手，通过分析国际新闻、检测信息差�
 ## 🏗️ 技术架构
 
 ### 部署环境
-- **VPS**: Los Angeles (***REMOVED***)
+- **VPS**: Los Angeles (<YOUR_VPS_IP>)
 - **配置**: 2.5GB RAM + 2GB Swap
 - **系统**: Docker Compose (3容器)
   - `investment-analyzer`: 主应用
@@ -312,7 +312,7 @@ DEEPSEEK_API_KEY=xxxxx
 QWEN_API_KEY=xxxxx
 GEMINI_API_KEY=key1,key2,key3  # 支持多 key 轮询
 SERPAPI_KEY=xxxxx              # 信息差检测（可选）
-DASHBOARD_PASSWORD=xxxxx       # 默认 123456
+DASHBOARD_PASSWORD=xxxxx       # 请设置强密码
 REDIS_HOST=127.0.0.1
 ```
 
@@ -375,8 +375,8 @@ REDIS_HOST=127.0.0.1
    - 解决403错误
    - 配置 `git remote set-url origin`
 
-3. **VPS IP地址**: `***REMOVED***`
-   - 不是 `***REMOVED***`（历史错误）
+3. **VPS IP地址**: `<YOUR_VPS_IP>`
+   - 不是 `<YOUR_VPS_IP>`（历史错误）
    - 不是 `emergency-fix.bat` 中的地址
 
 ### 🟢 A股市场适配
@@ -403,7 +403,7 @@ REDIS_HOST=127.0.0.1
 
 ### SSH 登录 VPS
 ```bash
-ssh root@***REMOVED***
+ssh root@<YOUR_VPS_IP>
 cd ~/investment-analyzer
 ```
 
@@ -457,7 +457,7 @@ SELECT signal, COUNT(*) FROM ai_signals GROUP BY signal;
 - ✅ AI自动绑定功能（默认启用）
 - ✅ 推送并部署到VPS (commit: 7a1e511)
 - ✅ 更新Bot菜单和帮助文档
-- ✅ 纠正VPS地址为 ***REMOVED***
+- ✅ 纠正VPS地址为 <YOUR_VPS_IP>
 
 ### 2025-xx-xx: 轻量级回测
 - ✅ 4种回测策略
@@ -526,6 +526,6 @@ SELECT signal, COUNT(*) FROM ai_signals GROUP BY signal;
 **重要提醒**: 每次有重大更新后都更新此文件！
 
 **记住**:
-- VPS地址: ***REMOVED***
+- VPS地址: <YOUR_VPS_IP>
 - Docker命令: `docker compose` (不是 docker-compose)
 - 工作流程: 改代码 → 问用户 → 推送 → 部署
